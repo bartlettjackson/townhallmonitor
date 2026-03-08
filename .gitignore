@@ -28,3 +28,6 @@ out/
 
 # Docker
 postgres-data/
+
+# Vercel
+.vercel

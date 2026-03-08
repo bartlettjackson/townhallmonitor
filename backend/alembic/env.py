@@ -1,12 +1,16 @@
 import asyncio
+import sys
 from logging.config import fileConfig
+from pathlib import Path
 
-from alembic import context
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from alembic import context
 from app.database import Base
-from app.models import Legislator, Event, ScrapeLog  # noqa: F401
+from app.models import Event, Legislator, ScrapeLog, User  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
