@@ -3,7 +3,7 @@ FROM python:3.11-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# System deps for asyncpg, bcrypt, and Playwright
+# System deps for asyncpg, bcrypt
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
@@ -20,9 +20,6 @@ WORKDIR /app
 # Install Python deps (cached layer)
 COPY pyproject.toml poetry.lock ./
 RUN poetry install --no-interaction --no-ansi --only main
-
-# Install Playwright Chromium + its OS deps
-RUN playwright install --with-deps chromium
 
 # Copy application code
 COPY . .

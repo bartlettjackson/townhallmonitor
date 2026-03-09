@@ -155,9 +155,8 @@ class BaseScraper(ABC):
         resp = await self._fetch_with_retry(url)
 
         if resp is None:
-            # All retries failed — fall back to Playwright
-            logger.info("HTTP retries exhausted for %s, trying Playwright", url)
-            return await self._fetch_with_playwright(url)
+            logger.info("HTTP retries exhausted for %s, skipping (Playwright disabled)", url)
+            return None
 
         # Track final URL after redirects
         self._last_final_url = str(resp.url)
@@ -170,8 +169,8 @@ class BaseScraper(ABC):
         # If the body looks suspiciously thin, the real content is probably
         # rendered client-side — fall back to Playwright.
         if len(html) < MIN_BODY_LENGTH:
-            logger.debug("%s body too short (%d chars), retrying with Playwright", url, len(html))
-            return await self._fetch_with_playwright(url)
+            logger.debug("%s body too short (%d chars), skipping (Playwright disabled)", url, len(html))
+            return None
         return html
 
     async def _fetch_with_playwright(self, url: str) -> str | None:
