@@ -15,9 +15,12 @@ interface LegislatorItem {
   scrape_status: string | null;
 }
 
+const TZ = "America/Los_Angeles";
+
 function fmtTimestamp(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleDateString("en-US", {
+  return d.toLocaleString("en-US", {
+    timeZone: TZ,
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -32,6 +35,14 @@ function statusBadge(status: string | null) {
     no_events: { bg: "#FEF3C7", text: "#92400E" },
     failed: { bg: "#FDE8E8", text: "#9B1C1C" },
     skipped: { bg: "#E5E7EB", text: "#4B5563" },
+    event_page_elsewhere: { bg: "#DBEAFE", text: "#1E40AF" },
+  };
+  const labels: Record<string, string> = {
+    success: "success",
+    no_events: "no_events",
+    failed: "failed",
+    skipped: "skipped",
+    event_page_elsewhere: "Event Page Elsewhere",
   };
   const c = colors[status || ""] || { bg: "#F3F4F6", text: "#6B7280" };
   return (
@@ -46,7 +57,7 @@ function statusBadge(status: string | null) {
         color: c.text,
       }}
     >
-      {status || "never"}
+      {labels[status || ""] || status || "never"}
     </span>
   );
 }

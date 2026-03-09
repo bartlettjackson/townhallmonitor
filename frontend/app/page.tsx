@@ -30,28 +30,37 @@ type SortDirection = "asc" | "desc";
 // Formatting helpers
 // ---------------------------------------------------------------------------
 
+const TZ = "America/Los_Angeles";
+
 function fmtDateHuman(iso: string | null): string {
   if (!iso) return "";
-  const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("en-US", {
-    weekday: "short",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const d = new Date(iso + "T12:00:00");
+    return d.toLocaleDateString("en-US", {
+      timeZone: TZ,
+      weekday: "short",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  }
+  return iso;
 }
 
 function fmtTime(t: string | null): string {
   if (!t) return "";
-  const [h, m] = t.split(":").map(Number);
-  if (isNaN(h)) return t;
+  const parts = t.split(":");
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (isNaN(h) || isNaN(m)) return t;
   const ampm = h >= 12 ? "PM" : "AM";
   const hr = h % 12 || 12;
   return `${hr}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
 function fmtTimestamp(d: Date): string {
-  return d.toLocaleDateString("en-US", {
+  return d.toLocaleString("en-US", {
+    timeZone: TZ,
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -66,15 +75,6 @@ function formatLegislatorName(ev: EventItem): string {
   return `${title} ${ev.legislator_name} (${partyLetter}-${ev.legislator_district})`;
 }
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function futureISO(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
 
 // ---------------------------------------------------------------------------
 // Sample data for demo mode
@@ -100,7 +100,7 @@ const SAMPLE_EVENTS: EventItem[] = [
 // Component
 // ---------------------------------------------------------------------------
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 50;
 
 export default function Home() {
   // Data state
@@ -111,8 +111,8 @@ export default function Home() {
 
   // Filter state
   const [chamber, setChamber] = useState("all");
-  const [dateFrom, setDateFrom] = useState(todayISO());
-  const [dateTo, setDateTo] = useState(futureISO(30));
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
   const [eventType, setEventType] = useState("all");
 
@@ -229,12 +229,22 @@ export default function Home() {
   }, []);
 
   // ---- Client-side sort (within current page) ----
+  function parseDateToSortKey(dateStr: string | null): string {
+    if (!dateStr) return "9999-99-99";
+    // Already ISO
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+    // Try to parse any date string
+    const t = Date.parse(dateStr);
+    if (!isNaN(t)) return new Date(t).toISOString().slice(0, 10);
+    return "9999-99-99";
+  }
+
   function getSortValue(ev: EventItem, col: SortColumn): string {
     switch (col) {
       case "name":
         return formatLegislatorName(ev).toLowerCase();
       case "date":
-        return ev.date || "9999";
+        return parseDateToSortKey(ev.date);
       case "time":
         return ev.time || "99:99";
       case "address":
@@ -540,104 +550,130 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Results Table */}
+      {/* Results Tables — Assembly then Senate */}
       <div style={{ maxWidth: "80rem", margin: "0 auto", padding: "0 24px", marginBottom: 24 }}>
-        <div className="card" style={{ overflow: "hidden" }}>
-          {events.length > 0 ? (
-            <>
-              <div className="table-scroll" style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr className="table-header">
-                      <th onClick={() => handleSort("name")}>Name{sortIndicator("name")}</th>
-                      <th onClick={() => handleSort("date")}>Date{sortIndicator("date")}</th>
-                      <th onClick={() => handleSort("time")}>Time{sortIndicator("time")}</th>
-                      <th onClick={() => handleSort("address")}>Address{sortIndicator("address")}</th>
-                      <th onClick={() => handleSort("title")}>Title of Event{sortIndicator("title")}</th>
-                      <th onClick={() => handleSort("details")}>Additional Details{sortIndicator("details")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pageEvents.map((ev, i) => (
-                      <tr
-                        key={ev.id}
-                        className={`${i % 2 === 0 ? "table-row-even" : "table-row-odd"} fade-in`}
-                        style={{ animationDelay: `${i * 30}ms` }}
-                      >
-                        <td style={{ fontWeight: 500, color: "#111827", whiteSpace: "nowrap" }}>
-                          {formatLegislatorName(ev)}
-                        </td>
-                        <td style={{ color: "#374151", whiteSpace: "nowrap" }}>
-                          {fmtDateHuman(ev.date)}
-                        </td>
-                        <td style={{ color: "#374151", whiteSpace: "nowrap" }}>
-                          {fmtTime(ev.time)}
-                        </td>
-                        <td style={{ color: "#374151", maxWidth: 280 }}>
-                          {ev.is_virtual ? (
-                            ev.address || "Virtual"
-                          ) : (
-                            <>
-                              {ev.address && <span style={{ color: "#9CA3AF" }}>&#128205; </span>}
-                              {ev.address}
-                            </>
-                          )}
-                        </td>
-                        <td style={{ color: "#111827", fontWeight: 500 }}>
-                          {ev.title}
-                          {ev.is_virtual && (
-                            <span className="badge-virtual">&#128187; Virtual</span>
-                          )}
-                        </td>
-                        <td style={{ color: "#4B5563", maxWidth: 320 }}>
-                          {ev.additional_details}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Pagination */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: "1px solid #E5E7EB", background: "#F9FAFB" }}>
-                <span style={{ fontSize: 14, color: "#4B5563" }}>
-                  Showing {pageStart + 1}&ndash;{pageEnd} of {totalEvents} events
-                </span>
-                <div style={{ display: "flex", gap: 4 }}>
-                  <button
-                    className="page-btn"
-                    disabled={currentPage === 1}
-                    onClick={() => setCurrentPage((p) => p - 1)}
-                  >
-                    &larr;
-                  </button>
-                  {getPageNumbers().map((p, i) =>
-                    p === "..." ? (
-                      <span key={`dots-${i}`} style={{ padding: "4px 6px", fontSize: 13, color: "#6B7280" }}>
-                        &hellip;
-                      </span>
-                    ) : (
-                      <button
-                        key={p}
-                        className={`page-btn${currentPage === p ? " active" : ""}`}
-                        onClick={() => setCurrentPage(p)}
-                      >
-                        {p}
-                      </button>
-                    )
-                  )}
-                  <button
-                    className="page-btn"
-                    disabled={currentPage === totalPages}
-                    onClick={() => setCurrentPage((p) => p + 1)}
-                  >
-                    &rarr;
-                  </button>
+        {events.length > 0 ? (
+          <>
+            {(["assembly", "senate"] as const).map((ch) => {
+              const chamberEvents = pageEvents.filter(
+                (ev) => ev.legislator_chamber === ch
+              );
+              if (chamberEvents.length === 0) return null;
+              const label = ch === "assembly" ? "Assembly" : "Senate";
+              return (
+                <div key={ch} className="card" style={{ overflow: "hidden", marginBottom: 16 }}>
+                  <div style={{ padding: "10px 16px", background: "var(--patriot-blue)", color: "white", fontWeight: 700, fontSize: 15, letterSpacing: "0.02em" }}>
+                    {label}
+                  </div>
+                  <div className="table-scroll" style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr className="table-header">
+                          <th onClick={() => handleSort("name")}>Name{sortIndicator("name")}</th>
+                          <th onClick={() => handleSort("date")}>Date{sortIndicator("date")}</th>
+                          <th onClick={() => handleSort("time")}>Time{sortIndicator("time")}</th>
+                          <th onClick={() => handleSort("address")}>Address{sortIndicator("address")}</th>
+                          <th onClick={() => handleSort("title")}>Title of Event{sortIndicator("title")}</th>
+                          <th>Event Link</th>
+                          <th onClick={() => handleSort("details")}>Additional Details{sortIndicator("details")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {chamberEvents.map((ev, i) => (
+                          <tr
+                            key={ev.id}
+                            className={`${i % 2 === 0 ? "table-row-even" : "table-row-odd"} fade-in`}
+                            style={{ animationDelay: `${i * 30}ms` }}
+                          >
+                            <td style={{ fontWeight: 500, color: "#111827", whiteSpace: "nowrap" }}>
+                              {formatLegislatorName(ev)}
+                            </td>
+                            <td style={{ color: "#374151", whiteSpace: "nowrap" }}>
+                              {fmtDateHuman(ev.date)}
+                            </td>
+                            <td style={{ color: "#374151", whiteSpace: "nowrap" }}>
+                              {fmtTime(ev.time)}
+                            </td>
+                            <td style={{ color: "#374151", maxWidth: 280 }}>
+                              {ev.is_virtual ? (
+                                ev.address || "Virtual"
+                              ) : (
+                                <>
+                                  {ev.address && <span style={{ color: "#9CA3AF" }}>&#128205; </span>}
+                                  {ev.address}
+                                </>
+                              )}
+                            </td>
+                            <td style={{ color: "#111827", fontWeight: 500 }}>
+                              {ev.title}
+                              {ev.is_virtual && (
+                                <span className="badge-virtual">&#128187; Virtual</span>
+                              )}
+                            </td>
+                            <td style={{ whiteSpace: "nowrap" }}>
+                              {ev.source_url && (
+                                <a
+                                  href={ev.source_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "#2563EB", textDecoration: "underline", fontSize: 13 }}
+                                >
+                                  View Event
+                                </a>
+                              )}
+                            </td>
+                            <td style={{ color: "#4B5563", maxWidth: 320 }}>
+                              {ev.additional_details}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
+              );
+            })}
+
+            {/* Pagination */}
+            <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px" }}>
+              <span style={{ fontSize: 14, color: "#4B5563" }}>
+                Showing {pageStart + 1}&ndash;{pageEnd} of {totalEvents} events
+              </span>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button
+                  className="page-btn"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage((p) => p - 1)}
+                >
+                  &larr;
+                </button>
+                {getPageNumbers().map((p, i) =>
+                  p === "..." ? (
+                    <span key={`dots-${i}`} style={{ padding: "4px 6px", fontSize: 13, color: "#6B7280" }}>
+                      &hellip;
+                    </span>
+                  ) : (
+                    <button
+                      key={p}
+                      className={`page-btn${currentPage === p ? " active" : ""}`}
+                      onClick={() => setCurrentPage(p)}
+                    >
+                      {p}
+                    </button>
+                  )
+                )}
+                <button
+                  className="page-btn"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage((p) => p + 1)}
+                >
+                  &rarr;
+                </button>
               </div>
-            </>
-          ) : (
-            /* Empty state */
+            </div>
+          </>
+        ) : (
+          <div className="card" style={{ overflow: "hidden" }}>
             <div style={{ padding: "64px 24px", textAlign: "center" }}>
               <div style={{ fontSize: 48, color: "#D1D5DB", marginBottom: 12 }}>&#128197;</div>
               <div style={{ fontSize: 18, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
@@ -647,8 +683,8 @@ export default function Home() {
                 Click <strong>Generate New Report</strong> to scrape legislator websites for events.
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Footer */}

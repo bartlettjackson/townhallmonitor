@@ -256,6 +256,40 @@ class ScraperOrchestrator:
         # AI ran but found nothing — that's a definitive "no events"
         return ScrapeResult(method="ai", ai_cost=cost)
 
+    @staticmethod
+    def _normalize_date(raw: str | None) -> str | None:
+        """Best-effort parse of any date string into YYYY-MM-DD."""
+        if not raw:
+            return None
+        raw = raw.strip()
+        # Already ISO
+        if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
+            return raw
+        from dateutil import parser as dateutil_parser
+
+        try:
+            dt = dateutil_parser.parse(raw, fuzzy=True, default=datetime(2026, 1, 1))
+            return dt.strftime("%Y-%m-%d")
+        except (ValueError, OverflowError):
+            return None
+
+    @staticmethod
+    def _normalize_time(raw: str | None) -> str | None:
+        """Best-effort parse of any time string into HH:MM."""
+        if not raw:
+            return None
+        raw = raw.strip()
+        # Already HH:MM
+        if len(raw) == 5 and raw[2] == ":":
+            return raw
+        from dateutil import parser as dateutil_parser
+
+        try:
+            dt = dateutil_parser.parse(raw, fuzzy=True)
+            return dt.strftime("%H:%M")
+        except (ValueError, OverflowError):
+            return None
+
     async def _save_events(
         self,
         event_data_list: list[EventData],
@@ -265,6 +299,9 @@ class ScraperOrchestrator:
         from sqlalchemy import select
 
         for ed in event_data_list:
+            # Normalize date/time to consistent formats
+            ed.date = self._normalize_date(ed.date)
+            ed.time = self._normalize_time(ed.time) if ed.time else ed.time
             # Upsert: match on legislator + title + date to avoid duplicates
             stmt = select(Event).where(
                 Event.legislator_id == legislator_id,

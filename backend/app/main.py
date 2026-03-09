@@ -1,7 +1,8 @@
 import io
 import logging
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -29,6 +30,22 @@ from app.models.user import User
 from app.scrape_runner import get_job, run_full_scrape, run_single_scrape
 
 logger = logging.getLogger(__name__)
+
+PACIFIC = ZoneInfo("America/Los_Angeles")
+
+
+def _to_pacific_iso(dt_val: datetime | None) -> str | None:
+    """Convert a naive-UTC datetime to a Pacific-timezone ISO string."""
+    if dt_val is None:
+        return None
+    aware = dt_val.replace(tzinfo=timezone.utc)
+    return aware.astimezone(PACIFIC).isoformat()
+
+
+def _today_pacific() -> str:
+    """Return today's date in Pacific timezone as YYYY-MM-DD."""
+    return datetime.now(PACIFIC).strftime("%Y-%m-%d")
+
 
 scheduler = AsyncIOScheduler()
 
@@ -176,7 +193,7 @@ def _legislator_dict(leg: Legislator) -> dict:
         "official_website": leg.official_website,
         "campaign_website": leg.campaign_website,
         "facebook_url": leg.facebook_url,
-        "last_scraped_at": leg.last_scraped_at.isoformat() if leg.last_scraped_at else None,
+        "last_scraped_at": _to_pacific_iso(leg.last_scraped_at),
         "scrape_status": leg.scrape_status,
         "facebook_flag": facebook_flag,
         "facebook_note": ("Events may only be posted on Facebook" if facebook_flag else None),
@@ -215,8 +232,8 @@ async def scrape_status(job_id: str, _user: User = Depends(get_current_user)):
     return {
         "id": job["id"],
         "status": job["status"],
-        "started_at": job["started_at"].isoformat(),
-        "completed_at": job["completed_at"].isoformat() if job["completed_at"] else None,
+        "started_at": _to_pacific_iso(job["started_at"]),
+        "completed_at": _to_pacific_iso(job["completed_at"]),
         "total": job["total"],
         "completed_count": job["completed_count"],
         "success": job["success"],
@@ -266,8 +283,8 @@ async def scrape_logs(
                 "id": log.id,
                 "legislator_name": log.legislator.name if log.legislator else None,
                 "legislator_id": log.legislator_id,
-                "started_at": log.started_at.isoformat() if log.started_at else None,
-                "completed_at": log.completed_at.isoformat() if log.completed_at else None,
+                "started_at": _to_pacific_iso(log.started_at),
+                "completed_at": _to_pacific_iso(log.completed_at),
                 "status": log.status,
                 "method_used": log.method_used,
                 "error_message": log.error_message,
@@ -313,15 +330,9 @@ async def scrape_failures(
                 "district": leg.district,
                 "official_website": leg.official_website,
                 "consecutive_failures": leg.consecutive_failures,
-                "circuit_open_until": (
-                    leg.circuit_open_until.isoformat() if leg.circuit_open_until else None
-                ),
+                "circuit_open_until": _to_pacific_iso(leg.circuit_open_until),
                 "last_error": last_log.error_message if last_log else None,
-                "last_attempt": (
-                    last_log.completed_at.isoformat()
-                    if last_log and last_log.completed_at
-                    else None
-                ),
+                "last_attempt": _to_pacific_iso(last_log.completed_at) if last_log else None,
             }
         )
 
@@ -346,7 +357,7 @@ async def scrape_summary(
     last_scrape_time = None
     duration_seconds = None
     if last_log and last_log.completed_at:
-        last_scrape_time = last_log.completed_at.isoformat()
+        last_scrape_time = _to_pacific_iso(last_log.completed_at)
         if last_log.started_at:
             duration_seconds = int((last_log.completed_at - last_log.started_at).total_seconds())
 
@@ -422,9 +433,7 @@ async def scrape_summary(
                 "district": leg.district,
                 "consecutive_failures": leg.consecutive_failures,
                 "last_error": last.error_message if last else None,
-                "last_attempt": last.completed_at.isoformat()
-                if last and last.completed_at
-                else None,
+                "last_attempt": _to_pacific_iso(last.completed_at) if last else None,
             }
         )
 
@@ -458,7 +467,7 @@ def _build_events_query(
     search: str | None,
 ):
     """Shared query builder for list and export."""
-    today_str = date.today().isoformat()
+    today_str = _today_pacific()
 
     q = (
         select(Event)
@@ -589,47 +598,54 @@ async def export_events(
     result = await session.execute(q)
     events = result.scalars().unique().all()
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Events"
-
-    headers = ["NAME", "DATE", "TIME", "ADDRESS", "TITLE OF EVENT", "ADDITIONAL DETAILS"]
-    ws.append(headers)
-
     from openpyxl.styles import Font
 
+    wb = Workbook()
+    headers = ["NAME", "DATE", "TIME", "ADDRESS", "TITLE OF EVENT", "EVENT LINK", "ADDITIONAL DETAILS"]
     bold = Font(bold=True)
-    for cell in ws[1]:
-        cell.font = bold
 
-    for ev in events:
-        name = _format_legislator_name(ev.legislator)
-        details_parts = [ev.event_type or "", ev.additional_details or ""]
-        details = " — ".join(p for p in details_parts if p)
-        ws.append(
-            [
-                name,
-                _format_date_human(ev.date),
-                _format_time_human(ev.time),
-                ev.address,
-                ev.title,
-                details,
-            ]
-        )
+    assembly_events = [ev for ev in events if ev.legislator.chamber == "assembly"]
+    senate_events = [ev for ev in events if ev.legislator.chamber == "senate"]
 
-    for col in ws.columns:
-        max_len = 0
-        col_letter = col[0].column_letter
-        for cell in col:
-            if cell.value:
-                max_len = max(max_len, len(str(cell.value)))
-        ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
+    def _fill_sheet(ws, ev_list):
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.font = bold
+        for ev in ev_list:
+            name = _format_legislator_name(ev.legislator)
+            details_parts = [ev.event_type or "", ev.additional_details or ""]
+            details = " — ".join(p for p in details_parts if p)
+            ws.append(
+                [
+                    name,
+                    _format_date_human(ev.date),
+                    _format_time_human(ev.time),
+                    ev.address,
+                    ev.title,
+                    ev.source_url,
+                    details,
+                ]
+            )
+        for col in ws.columns:
+            max_len = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
+            ws.column_dimensions[col_letter].width = min(max_len + 2, 60)
+
+    ws_assembly = wb.active
+    ws_assembly.title = "Assembly"
+    _fill_sheet(ws_assembly, assembly_events)
+
+    ws_senate = wb.create_sheet("Senate")
+    _fill_sheet(ws_senate, senate_events)
 
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
 
-    filename = f"ca_legislative_events_{date.today().isoformat()}.xlsx"
+    filename = f"ca_legislative_events_{_today_pacific()}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

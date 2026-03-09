@@ -7,6 +7,7 @@ and paragraph text for details.
 """
 
 import logging
+import re
 
 from bs4 import BeautifulSoup, Tag
 
@@ -62,6 +63,9 @@ class AsmRcScraper(BaseScraper):
         date_el = el.select_one("time, .date, .event-date, .post-date")
         date = date_el.get_text(strip=True) if date_el else None
 
+        if not date:
+            date = self._date_from_url(el)
+
         time_el = el.select_one(".time, .event-time")
         time_str = time_el.get_text(strip=True) if time_el else None
 
@@ -82,3 +86,15 @@ class AsmRcScraper(BaseScraper):
             is_virtual=self._detect_virtual(el.get_text()),
             raw_html_snippet=self._snippet(el),
         )
+
+    @staticmethod
+    def _date_from_url(el: Tag) -> str | None:
+        """Extract YYYY-MM-DD from an event link like /event/20260411-slug."""
+        link = el.select_one("a[href*='/event/']")
+        if not link:
+            return None
+        href = link.get("href", "")
+        m = re.search(r"/event/(\d{4})(\d{2})(\d{2})-", href)
+        if m:
+            return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        return None

@@ -127,6 +127,7 @@ class TestExportEvents:
             "TIME",
             "ADDRESS",
             "TITLE OF EVENT",
+            "EVENT LINK",
             "ADDITIONAL DETAILS",
         ]
 

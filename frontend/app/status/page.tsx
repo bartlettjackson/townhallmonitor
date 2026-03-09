@@ -29,9 +29,12 @@ interface ProblemLegislator {
   last_attempt: string | null;
 }
 
+const TZ = "America/Los_Angeles";
+
 function fmtTimestamp(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleDateString("en-US", {
+  return d.toLocaleString("en-US", {
+    timeZone: TZ,
     month: "short",
     day: "numeric",
     year: "numeric",

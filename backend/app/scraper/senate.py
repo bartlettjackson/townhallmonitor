@@ -6,6 +6,8 @@ views system with .views-row containers and field-based layouts.
 """
 
 import logging
+import re
+from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
@@ -15,6 +17,24 @@ from app.scraper.filters import is_constituent_event
 
 logger = logging.getLogger(__name__)
 
+_TIME_RANGE_RE = re.compile(
+    r"(\d{1,2}(?::\d{2})?)\s*(?:a\.m\.|p\.m\.|AM|PM|am|pm)?\s*[-\u2013]\s*"
+    r"\d{1,2}(?::\d{2})?\s*(a\.m\.|p\.m\.|AM|PM|am|pm)",
+    re.IGNORECASE,
+)
+_TIME_RE = re.compile(r"(\d{1,2}(?::\d{2})?\s*(?:a\.m\.|p\.m\.|AM|PM|am|pm))", re.IGNORECASE)
+
+
+def _extract_start_time(text: str) -> str | None:
+    """Extract the start time from text, handling ranges like '8 - 11am'."""
+    m = _TIME_RANGE_RE.search(text)
+    if m:
+        return f"{m.group(1)} {m.group(2)}"
+    m = _TIME_RE.search(text)
+    if m:
+        return m.group(1)
+    return None
+
 
 class SenateScraper(BaseScraper):
     name = "senate"
@@ -22,6 +42,7 @@ class SenateScraper(BaseScraper):
     async def extract_events(self, html: str, url: str) -> list[EventData]:
         soup = BeautifulSoup(html, "html.parser")
         events: list[EventData] = []
+        detail_hrefs: list[str | None] = []
 
         containers = self._find_event_containers(soup)
         if not containers:
@@ -31,6 +52,14 @@ class SenateScraper(BaseScraper):
             parsed = self._parse_container(el, url)
             if parsed and is_constituent_event(parsed.title, parsed.additional_details):
                 events.append(parsed)
+                link = el.select_one("a[href*='/event/']")
+                href = urljoin(url, link["href"]) if link and link.get("href") else None
+                detail_hrefs.append(href)
+
+        # Enrich events missing time from detail pages
+        for ev, href in zip(events, detail_hrefs):
+            if href and (not ev.time or not ev.address):
+                await self._enrich_from_detail(ev, href)
 
         logger.info("SenateScraper found %d constituent events at %s", len(events), url)
         return events
@@ -76,6 +105,9 @@ class SenateScraper(BaseScraper):
         )
         date = date_el.get_text(strip=True) if date_el else None
 
+        if not date:
+            date = self._date_from_url(el)
+
         time_el = el.select_one(".views-field-field-time .field-content, .time, .event-time")
         time_str = time_el.get_text(strip=True) if time_el else None
 
@@ -108,3 +140,89 @@ class SenateScraper(BaseScraper):
             is_virtual=self._detect_virtual(el.get_text()),
             raw_html_snippet=self._snippet(el),
         )
+
+    async def _enrich_from_detail(self, ev: EventData, detail_url: str):
+        """Fetch a Senate event detail page and extract time/address."""
+        html = await self.fetch_page(detail_url)
+        if not html:
+            return
+
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Senate uses .field--name-field-date-of-event with combined date+time
+        # e.g., "Sat, Feb 28 2026, 8 - 11am"
+        date_field = soup.select_one(".field--name-field-date-of-event")
+        if date_field and not ev.time:
+            text = date_field.get_text(strip=True)
+            t = _extract_start_time(text)
+            if t:
+                ev.time = t
+
+        lines = _extract_body_lines(soup)
+
+        if not ev.time and lines:
+            for line in lines:
+                t = _extract_start_time(line)
+                if t:
+                    ev.time = t
+                    break
+
+        if not ev.address and lines:
+            addr = _extract_address_from_lines(lines)
+            if addr:
+                ev.address = addr
+
+    @staticmethod
+    def _date_from_url(el: Tag) -> str | None:
+        """Extract YYYY-MM-DD from an event link like /event/20260411-slug."""
+        link = el.select_one("a[href*='/event/']")
+        if not link:
+            return None
+        href = link.get("href", "")
+        m = re.search(r"/event/(\d{4})(\d{2})(\d{2})-", href)
+        if m:
+            return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+        return None
+
+
+_ADDR_RE = re.compile(r"\d+\s+[\w\s.]+(?:St|Ave|Blvd|Dr|Rd|Way|Ln|Ct|Pl|Hwy)\.?")
+_ZIP_RE = re.compile(r"[A-Z][a-z]+,?\s+CA\s+\d{5}")
+
+
+def _extract_body_lines(soup: BeautifulSoup) -> list[str]:
+    """Get text lines from the main event body on a Senate detail page.
+
+    Senate detail pages have multiple .field--name-body blocks (fire alerts,
+    social links, event content, office info, footer). We want the one with
+    event content — typically the block containing an address or time.
+    Content lives in direct <p> children, not .field__item.
+    """
+    best_lines: list[str] = []
+    for body_el in soup.select(".field--name-body"):
+        paragraphs = body_el.select("p")
+        if not paragraphs:
+            continue
+        lines = [p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)]
+        text = " ".join(lines)
+        if len(text) < 30 or len(text) > 5000:
+            continue
+        if _ADDR_RE.search(text) or _ZIP_RE.search(text) or _TIME_RE.search(text):
+            return lines
+        if len(lines) > len(best_lines):
+            best_lines = lines
+    return best_lines
+
+
+def _extract_address_from_lines(lines: list[str]) -> str | None:
+    addr_parts = []
+    collecting = False
+    for line in lines:
+        if _ADDR_RE.search(line):
+            collecting = True
+            addr_parts.append(line)
+        elif collecting and _ZIP_RE.search(line):
+            addr_parts.append(line)
+            break
+        elif collecting:
+            break
+    return ", ".join(addr_parts) if addr_parts else None

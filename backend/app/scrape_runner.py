@@ -7,7 +7,8 @@ legislators with bounded concurrency.
 import asyncio
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, select
 
@@ -210,8 +211,8 @@ async def _execute_single_scrape(job_id: str, legislator_id: int):
 
 
 async def _remove_past_events() -> int:
-    """Delete events with dates in the past. Returns count removed."""
-    today_str = date.today().isoformat()
+    """Delete events with dates in the past (Pacific time). Returns count removed."""
+    today_str = datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
     async with async_session() as session:
         # Only delete events that have a parseable date in the past.
         # Events with NULL date or unparseable date are kept.
