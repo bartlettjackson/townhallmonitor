@@ -61,6 +61,11 @@ async def lifespan(app: FastAPI):
 
     setup_logging()
 
+    # Auto-seed legislators on startup (idempotent)
+    from scripts.seed_legislators import seed_legislators
+    result = await seed_legislators()
+    logger.info("Legislator seed: %d created, %d updated", result["created"], result["updated"])
+
     if SCRAPE_ENABLED and SCRAPE_CRON:
         parts = SCRAPE_CRON.split()
         if len(parts) == 5:
