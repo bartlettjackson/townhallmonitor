@@ -20,7 +20,7 @@ from app.scraper.orchestrator import ScraperOrchestrator
 
 logger = logging.getLogger(__name__)
 
-MAX_CONCURRENCY = 10
+MAX_CONCURRENCY = 3
 
 # In-memory job store (evicts after 30 minutes)
 _jobs: dict[str, dict] = {}

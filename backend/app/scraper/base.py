@@ -64,7 +64,16 @@ class BaseScraper(ABC):
         if self._browser is None:
             self._pw_context_manager = async_playwright()
             pw = await self._pw_context_manager.start()
-            self._browser = await pw.chromium.launch(headless=True)
+            self._browser = await pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-gpu",
+                    "--disable-dev-shm-usage",
+                    "--disable-extensions",
+                    "--no-sandbox",
+                    "--js-flags=--max-old-space-size=128",
+                ],
+            )
         return self._browser
 
     async def close(self):
