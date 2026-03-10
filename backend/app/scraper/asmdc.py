@@ -9,6 +9,7 @@ or /town-halls. Common structures include:
 
 import logging
 import re
+from datetime import datetime
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
@@ -46,10 +47,21 @@ class AsmDcScraper(BaseScraper):
                 href = urljoin(url, link["href"]) if link and link.get("href") else None
                 detail_hrefs.append(href)
 
-        # Enrich events missing time/address from detail pages
-        for ev, href in zip(events, detail_hrefs):
+        # Enrich events missing time/address from detail pages.
+        # Detail pages with schedule tables (e.g. mobile office hours) produce
+        # multiple sub-events that replace the parent event.
+        extra_events: list[EventData] = []
+        replace_indices: list[int] = []
+        for i, (ev, href) in enumerate(zip(events, detail_hrefs)):
             if href and (not ev.time or not ev.address):
-                await self._enrich_from_detail(ev, href)
+                sub_events = await self._enrich_from_detail(ev, href)
+                if sub_events:
+                    replace_indices.append(i)
+                    extra_events.extend(sub_events)
+
+        for i in reversed(replace_indices):
+            events.pop(i)
+        events.extend(extra_events)
 
         logger.info("AsmDcScraper found %d constituent events at %s", len(events), url)
         return events
@@ -155,16 +167,31 @@ class AsmDcScraper(BaseScraper):
             raw_html_snippet=self._snippet(el),
         )
 
-    async def _enrich_from_detail(self, ev: EventData, detail_url: str):
-        """Fetch an event detail page and extract time/address from the body."""
+    async def _enrich_from_detail(self, ev: EventData, detail_url: str) -> list[EventData]:
+        """Fetch an event detail page and extract time/address from the body.
+
+        If the page has a schedule table (e.g. mobile office hours with multiple
+        dates/times/locations), returns individual EventData per row.  The caller
+        should replace the parent event with these sub-events.
+
+        Returns an empty list when no schedule table is found (the parent event
+        is mutated in place instead).
+        """
         html = await self.fetch_page(detail_url)
         if not html:
-            return
+            return []
 
         soup = BeautifulSoup(html, "html.parser")
+
+        # Check for schedule tables first (multi-session events)
+        sub_events = self._parse_schedule_table(soup, ev, detail_url)
+        if sub_events:
+            return sub_events
+
+        # Fallback: enrich the single event in place
         lines = self._extract_body_lines(soup)
         if not lines:
-            return
+            return []
 
         if not ev.time:
             for line in lines:
@@ -178,6 +205,86 @@ class AsmDcScraper(BaseScraper):
 
         if not ev.additional_details and lines:
             ev.additional_details = lines[0]
+
+        return []
+
+    @staticmethod
+    def _parse_schedule_table(
+        soup: BeautifulSoup, parent_ev: EventData, detail_url: str
+    ) -> list[EventData]:
+        """Extract individual events from a schedule table on a detail page.
+
+        Some ASMDC pages list multiple sessions (e.g. mobile office hours) in a
+        ``<table>`` with columns like: date | time | venue | address.
+        """
+        body = soup.select_one(".field--name-body")
+        if not body:
+            return []
+
+        # Try to get the year from the URL (e.g. /event/20260301-slug)
+        m = re.search(r"/event/(\d{4})", detail_url)
+        year = int(m.group(1)) if m else None
+
+        for table in body.select("table"):
+            rows = table.select("tr")
+            sub_events: list[EventData] = []
+            for row in rows:
+                cells = row.select("td")
+                if len(cells) < 2:
+                    continue
+
+                # Find the cell with a time pattern
+                time_val = None
+                time_idx = -1
+                for ci, cell in enumerate(cells):
+                    t = extract_start_time(cell.get_text(strip=True))
+                    if t:
+                        time_val = t
+                        time_idx = ci
+                        break
+
+                if not time_val or time_idx < 1:
+                    continue  # need at least a date column before the time
+
+                # Date is in the column before time
+                date_text = cells[time_idx - 1].get_text(strip=True)
+                date_str = date_text
+                if year:
+                    try:
+                        dt = datetime.strptime(f"{date_text} {year}", "%B %d %Y")
+                        date_str = dt.strftime("%Y-%m-%d")
+                    except ValueError:
+                        pass
+
+                # Venue and address from columns after time
+                venue = (
+                    cells[time_idx + 1].get_text(strip=True) if time_idx + 1 < len(cells) else None
+                )
+                address = (
+                    cells[time_idx + 2].get_text(" ", strip=True)
+                    if time_idx + 2 < len(cells)
+                    else None
+                )
+                full_address = ", ".join(filter(None, [venue, address])) or None
+
+                sub_events.append(
+                    EventData(
+                        title=parent_ev.title,
+                        date=date_str,
+                        time=time_val,
+                        address=full_address,
+                        event_type=parent_ev.event_type,
+                        additional_details=parent_ev.additional_details,
+                        source_url=detail_url,
+                        is_virtual=parent_ev.is_virtual,
+                        raw_html_snippet=str(row)[:2000],
+                    )
+                )
+
+            if sub_events:
+                return sub_events
+
+        return []
 
     @staticmethod
     def _extract_body_lines(soup: BeautifulSoup) -> list[str]:

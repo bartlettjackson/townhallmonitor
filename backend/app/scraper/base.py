@@ -22,6 +22,7 @@ RATE_LIMIT_SECONDS = 2.0
 
 EVENT_PATHS = [
     "/events",
+    "/district/events",
     "/town-hall",
     "/town-halls",
     "/calendar",

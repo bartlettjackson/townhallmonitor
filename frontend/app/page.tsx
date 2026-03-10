@@ -125,6 +125,9 @@ export default function Home() {
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
 
+  // Expanded detail rows (track by event id)
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+
   // Progress / scrape state
   const [scrapeRunning, setScrapeRunning] = useState(false);
   const [progressPct, setProgressPct] = useState(0);
@@ -625,7 +628,31 @@ export default function Home() {
                               )}
                             </td>
                             <td style={{ color: "#4B5563", maxWidth: 320 }}>
-                              {ev.additional_details}
+                              {ev.additional_details && ev.additional_details.length > 120 ? (
+                                expandedRows.has(ev.id) ? (
+                                  <>
+                                    {ev.additional_details}
+                                    <button
+                                      onClick={() => setExpandedRows((prev) => { const next = new Set(prev); next.delete(ev.id); return next; })}
+                                      style={{ display: "block", marginTop: 4, background: "none", border: "none", color: "#2563EB", cursor: "pointer", fontSize: 12, padding: 0 }}
+                                    >
+                                      Show less
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    {ev.additional_details.slice(0, 120)}&hellip;
+                                    <button
+                                      onClick={() => setExpandedRows((prev) => new Set(prev).add(ev.id))}
+                                      style={{ display: "block", marginTop: 4, background: "none", border: "none", color: "#2563EB", cursor: "pointer", fontSize: 12, padding: 0 }}
+                                    >
+                                      Show more
+                                    </button>
+                                  </>
+                                )
+                              ) : (
+                                ev.additional_details
+                              )}
                             </td>
                           </tr>
                         ))}
