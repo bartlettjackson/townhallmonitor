@@ -220,9 +220,19 @@ class ScraperOrchestrator:
                 continue
             pages.append((url, html))
             extracted = await scraper.extract_events(html, url)
+            logger.info(
+                "%s extracted %d events from %s (%d chars)",
+                scraper.name, len(extracted), url, len(html),
+            )
             if extracted:
                 events.extend(extracted)
                 break
+
+        if not pages:
+            logger.warning(
+                "%s: all %d paths returned no usable HTML for %s",
+                scraper.name, len(EVENT_PATHS), base_url,
+            )
 
         return events, pages, redirect_url
 

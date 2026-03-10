@@ -162,14 +162,14 @@ class BaseScraper(ABC):
         self._last_final_url = str(resp.url)
 
         if resp.status_code >= 400:
-            logger.debug("%s returned HTTP %s", url, resp.status_code)
+            logger.info("fetch_page: %s returned HTTP %s", url, resp.status_code)
             return None
 
         html = resp.text
         # If the body looks suspiciously thin, the real content is probably
         # rendered client-side — fall back to Playwright.
         if len(html) < MIN_BODY_LENGTH:
-            logger.debug("%s body too short (%d chars), skipping (Playwright disabled)", url, len(html))
+            logger.info("fetch_page: %s body too short (%d chars), skipping", url, len(html))
             return None
         return html
 
