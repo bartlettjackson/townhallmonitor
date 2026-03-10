@@ -49,7 +49,7 @@ export default function Header() {
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            {/* CSS Flag */}
+            {/* California Flag */}
             <div
               style={{
                 width: 36,
@@ -58,26 +58,44 @@ export default function Header() {
                 overflow: "hidden",
                 flexShrink: 0,
                 boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                background: "#FFFFFF",
+                position: "relative",
               }}
             >
+              {/* Red bottom stripe */}
               <div
                 style={{
-                  height: "100%",
-                  background:
-                    "repeating-linear-gradient(to bottom, #B22234 0px, #B22234 2px, white 2px, white 4px)",
-                  position: "relative",
+                  position: "absolute",
+                  bottom: 0,
+                  width: "100%",
+                  height: "22%",
+                  background: "#BC2028",
+                }}
+              />
+              {/* Bear silhouette */}
+              <div
+                style={{
+                  position: "absolute",
+                  top: "28%",
+                  left: "22%",
+                  width: "60%",
+                  height: "40%",
+                  background: "#8B4513",
+                  borderRadius: "40% 30% 30% 40%",
+                }}
+              />
+              {/* Red star */}
+              <div
+                style={{
+                  position: "absolute",
+                  top: "12%",
+                  left: "10%",
+                  color: "#BC2028",
+                  fontSize: 10,
+                  lineHeight: 1,
                 }}
               >
-                <div
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "42%",
-                    height: "54%",
-                    background: "#3C3B6E",
-                  }}
-                />
+                ★
               </div>
             </div>
             <div>
