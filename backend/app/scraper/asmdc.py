@@ -102,6 +102,20 @@ class AsmDcScraper(BaseScraper):
         time_el = el.select_one(".tribe-event-time, .time, .event-time")
         time_str = time_el.get_text(strip=True) if time_el else None
 
+        # Fallback: extract time from body text within the container
+        if not time_str:
+            body_el = el.select_one(".field--name-body, .node__content")
+            if body_el:
+                for p in body_el.select("p"):
+                    t = extract_start_time(p.get_text())
+                    if t:
+                        time_str = t
+                        break
+
+        # If still no time, try the full container text
+        if not time_str:
+            time_str = extract_start_time(el.get_text())
+
         # Location / address
         loc_el = el.select_one(
             ".tribe-venue, .tribe-venue-location, "
@@ -110,12 +124,22 @@ class AsmDcScraper(BaseScraper):
         )
         address = loc_el.get_text(" ", strip=True) if loc_el else None
 
+        # Fallback: extract address from body text
+        if not address:
+            body_el = el.select_one(".field--name-body, .node__content")
+            if body_el:
+                lines = [
+                    p.get_text(strip=True) for p in body_el.select("p") if p.get_text(strip=True)
+                ]
+                address = self._extract_address(lines)
+
         # Description
         desc_el = el.select_one(
             ".tribe-events-list-event-description, "
             ".tribe-events-content, "
             ".event-description, .description, "
-            ".entry-summary, .event-details"
+            ".entry-summary, .event-details, "
+            ".field--name-body"
         )
         details = desc_el.get_text(strip=True) if desc_el else None
 

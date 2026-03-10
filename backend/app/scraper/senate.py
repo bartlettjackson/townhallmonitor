@@ -94,6 +94,20 @@ class SenateScraper(BaseScraper):
         time_el = el.select_one(".views-field-field-time .field-content, .time, .event-time")
         time_str = time_el.get_text(strip=True) if time_el else None
 
+        # Fallback: extract time from body text within the container
+        if not time_str:
+            body_el = el.select_one(".field--name-body, .node__content")
+            if body_el:
+                for p in body_el.select("p"):
+                    t = extract_start_time(p.get_text())
+                    if t:
+                        time_str = t
+                        break
+
+        # If still no time, try the full container text
+        if not time_str:
+            time_str = extract_start_time(el.get_text())
+
         # Location
         loc_el = el.select_one(
             ".views-field-field-location .field-content, "
