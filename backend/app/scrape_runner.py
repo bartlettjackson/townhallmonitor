@@ -85,26 +85,36 @@ async def _execute_scrape(job_id: str):
 
         async def scrape_one(leg: Legislator):
             async with sem:
-                orch = ScraperOrchestrator()
-                async with async_session() as sess:
-                    # Re-attach legislator to this session
-                    leg_in_session = await sess.get(Legislator, leg.id)
-                    res = await orch.scrape_legislator(leg_in_session, sess)
+                try:
+                    orch = ScraperOrchestrator()
+                    async with async_session() as sess:
+                        # Re-attach legislator to this session
+                        leg_in_session = await sess.get(Legislator, leg.id)
+                        if leg_in_session is None:
+                            logger.error("Legislator %d (%s) not found in session", leg.id, leg.name)
+                            job["failed"] += 1
+                            job["completed_count"] += 1
+                            return
+                        res = await orch.scrape_legislator(leg_in_session, sess)
 
-                job["completed_count"] += 1
-                if res.error:
+                    job["completed_count"] += 1
+                    if res.error:
+                        job["failed"] += 1
+                    elif res.events:
+                        job["success"] += 1
+                    else:
+                        job["no_events"] += 1
+                    if res.method == "ai":
+                        job["ai_used"] += 1
+                    if res.ai_cost:
+                        job["ai_total_cost"] += res.ai_cost.get("total_cost_usd", 0)
+                except Exception as exc:
+                    logger.exception("scrape_one failed for %s (id=%d): %s", leg.name, leg.id, exc)
                     job["failed"] += 1
-                elif res.events:
-                    job["success"] += 1
-                else:
-                    job["no_events"] += 1
-                if res.method == "ai":
-                    job["ai_used"] += 1
-                if res.ai_cost:
-                    job["ai_total_cost"] += res.ai_cost.get("total_cost_usd", 0)
+                    job["completed_count"] += 1
 
         tasks = [scrape_one(leg) for leg in legislators]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks)
 
         # Remove past events — but only if at least one legislator succeeded.
         # If the entire run had zero successes (e.g. network outage), preserve
