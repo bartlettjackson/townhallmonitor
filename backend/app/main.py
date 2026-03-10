@@ -1,5 +1,6 @@
 import io
 import logging
+import os as _os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -29,13 +30,13 @@ from app.auth import (
 from app.config import ALLOWED_ORIGINS, SCRAPE_CRON, SCRAPE_ENABLED
 from app.database import get_session
 from app.invite import generate_invite_code, validate_and_consume_invite
-from app.password_check import is_breached_password
-from app.request_context import generate_request_id, mask_email, request_id_var
 from app.models.event import Event
 from app.models.legislator import Legislator
 from app.models.scrape_log import ScrapeLog
 from app.models.user import User
+from app.password_check import is_breached_password
 from app.rate_limit import limiter
+from app.request_context import generate_request_id, mask_email, request_id_var
 from app.scrape_runner import get_job, run_full_scrape, run_single_scrape
 
 logger = logging.getLogger(__name__)
@@ -94,9 +95,8 @@ async def _seed_bootstrap_invite():
     The code gets 100 uses and 365 days expiry. Once the app is running,
     use the /api/auth/invite-codes endpoint to generate proper codes.
     """
-    import os
-
     import hashlib
+    import os
 
     from app.database import async_session
     from app.models.invite_code import InviteCode
@@ -157,8 +157,6 @@ async def lifespan(app: FastAPI):
     if scheduler.running:
         scheduler.shutdown(wait=False)
 
-
-import os as _os
 
 _is_production = _os.getenv("RAILWAY_ENVIRONMENT") or _os.getenv("NODE_ENV") == "production"
 

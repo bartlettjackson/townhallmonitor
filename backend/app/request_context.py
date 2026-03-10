@@ -1,6 +1,5 @@
 """Per-request context: request ID and helpers for security logging."""
 
-import hashlib
 import uuid
 from contextvars import ContextVar
 
