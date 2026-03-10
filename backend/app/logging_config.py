@@ -6,6 +6,25 @@ import os
 import sys
 from datetime import datetime, timezone
 
+from app.request_context import request_id_var
+
+# Extra fields that security-event log records may carry.
+_EXTRA_FIELDS = (
+    # Scraper context
+    "legislator_id",
+    "legislator_name",
+    "url",
+    "method",
+    "status",
+    "cost_usd",
+    # Security events
+    "event_type",
+    "ip",
+    "email_masked",
+    "outcome",
+    "reason",
+)
+
 
 class JSONFormatter(logging.Formatter):
     """Outputs log records as single-line JSON objects."""
@@ -15,18 +34,11 @@ class JSONFormatter(logging.Formatter):
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
+            "request_id": request_id_var.get("-"),
             "message": record.getMessage(),
         }
 
-        # Include optional extra fields when present
-        for key in (
-            "legislator_id",
-            "legislator_name",
-            "url",
-            "method",
-            "status",
-            "cost_usd",
-        ):
+        for key in _EXTRA_FIELDS:
             val = getattr(record, key, None)
             if val is not None:
                 log_entry[key] = val
@@ -58,7 +70,8 @@ def setup_logging() -> None:
         handler.setFormatter(JSONFormatter())
     else:
         handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)-8s %(name)s — %(message)s")
+            logging.Formatter("%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s — %(message)s",
+                              defaults={"request_id": "-"})
         )
 
     root.addHandler(handler)

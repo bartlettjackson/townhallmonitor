@@ -17,8 +17,8 @@ if "+asyncpg" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "change-me")
-INVITE_CODE = os.getenv("INVITE_CODE", "change-me-invite")
+AUTH_SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "dev-only-insecure-key")
+INVITE_CODE = os.getenv("INVITE_CODE", "")
 
 # CORS: comma-separated list of allowed origins
 ALLOWED_ORIGINS = [

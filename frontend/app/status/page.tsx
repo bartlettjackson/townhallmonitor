@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Header from "@/components/Header";
+import { secureFetch } from "@/app/lib/csrf";
 
 interface ScrapeSummary {
   last_scrape_time: string | null;
@@ -25,7 +26,7 @@ interface ProblemLegislator {
   chamber: string;
   district: string;
   consecutive_failures: number;
-  last_error: string | null;
+  has_error: boolean;
   last_attempt: string | null;
 }
 
@@ -132,7 +133,7 @@ export default function StatusPage() {
   async function handleRescrape(legId: number) {
     setScraping((s) => ({ ...s, [legId]: true }));
     try {
-      const res = await fetch(`/api/scrape/run/${legId}`, { method: "POST" });
+      const res = await secureFetch(`/api/scrape/run/${legId}`, { method: "POST" });
       if (!res.ok) throw new Error("Failed");
       const { job_id } = await res.json();
 
@@ -516,9 +517,9 @@ export default function StatusPage() {
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
                         }}
-                        title={leg.last_error || ""}
+                        title={leg.has_error ? "Error occurred" : ""}
                       >
-                        {leg.last_error || "N/A"}
+                        {leg.has_error ? "Error" : "N/A"}
                       </td>
                       <td
                         style={{

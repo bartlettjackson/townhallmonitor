@@ -66,7 +66,7 @@ class TestRegister:
                 "invite_code": "test-invite",
             },
         )
-        assert resp.status_code == 409
+        assert resp.status_code == 403
 
 
 class TestMe:

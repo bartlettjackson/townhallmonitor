@@ -12,12 +12,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.auth import create_token, hash_password
+from app.auth import create_access_token, hash_password
 from app.database import Base, get_session
 from app.models.event import Event  # noqa: F401
+from app.models.invite_code import InviteCode  # noqa: F401
 from app.models.legislator import Legislator
 from app.models.scrape_log import ScrapeLog  # noqa: F401
-from app.models.user import User
+from app.models.user import RefreshToken, User  # noqa: F401
 
 # Single engine shared across all tests
 _engine = create_async_engine("sqlite+aiosqlite://", echo=False)
@@ -32,6 +33,24 @@ async def _setup_tables():
     yield
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest.fixture(autouse=True)
+async def _seed_invite_code(_setup_tables):
+    """Seed the bootstrap invite code for tests (matches INVITE_CODE env var)."""
+    import hashlib
+    from datetime import datetime, timedelta
+
+    async with _async_session_factory() as session:
+        code_hash = hashlib.sha256(b"test-invite").hexdigest()
+        invite = InviteCode(
+            code_hash=code_hash,
+            max_uses=100,
+            times_used=0,
+            expires_at=datetime.utcnow() + timedelta(days=365),
+        )
+        session.add(invite)
+        await session.commit()
 
 
 @pytest.fixture
@@ -67,7 +86,7 @@ async def test_user(db_session: AsyncSession):
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)
-    token = create_token(user.id, user.email)
+    token = create_access_token(user.id, user.email, user.token_version)
     return user, token
 
 

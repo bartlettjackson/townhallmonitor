@@ -1,37 +1,69 @@
 import io
 import logging
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from openpyxl import Workbook
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from app.auth import (
-    create_token,
+    create_access_token,
+    create_refresh_token,
     get_current_user,
     hash_password,
+    revoke_all_user_tokens,
+    rotate_refresh_token,
     verify_password,
+    verify_password_timing_safe,
 )
-from app.config import ALLOWED_ORIGINS, INVITE_CODE, SCRAPE_CRON, SCRAPE_ENABLED
+from app.config import ALLOWED_ORIGINS, SCRAPE_CRON, SCRAPE_ENABLED
 from app.database import get_session
+from app.invite import generate_invite_code, validate_and_consume_invite
+from app.password_check import is_breached_password
+from app.request_context import generate_request_id, mask_email, request_id_var
 from app.models.event import Event
 from app.models.legislator import Legislator
 from app.models.scrape_log import ScrapeLog
 from app.models.user import User
+from app.rate_limit import limiter
 from app.scrape_runner import get_job, run_full_scrape, run_single_scrape
 
 logger = logging.getLogger(__name__)
+_security_logger = logging.getLogger("security")
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
+
+
+def _log_security_event(
+    event_type: str,
+    outcome: str,
+    ip: str,
+    email: str | None = None,
+    reason: str | None = None,
+):
+    """Emit a structured security log entry to the 'security' logger."""
+    extra = {
+        "event_type": event_type,
+        "outcome": outcome,
+        "ip": ip,
+    }
+    if email:
+        extra["email_masked"] = mask_email(email)
+    if reason:
+        extra["reason"] = reason
+
+    level = logging.INFO if outcome == "success" else logging.WARNING
+    _security_logger.log(level, "%s: %s", event_type, outcome, extra=extra)
 
 
 def _to_pacific_iso(dt_val: datetime | None) -> str | None:
@@ -55,6 +87,44 @@ async def scheduled_scrape():
     await run_full_scrape()
 
 
+async def _seed_bootstrap_invite():
+    """Seed a bootstrap invite code from INVITE_CODE env var (idempotent).
+
+    This allows the first deployment to work with a known invite code.
+    The code gets 100 uses and 365 days expiry. Once the app is running,
+    use the /api/auth/invite-codes endpoint to generate proper codes.
+    """
+    import os
+
+    import hashlib
+
+    from app.database import async_session
+    from app.models.invite_code import InviteCode
+
+    bootstrap_code = os.getenv("INVITE_CODE", "")
+    if not bootstrap_code:
+        return
+
+    code_hash = hashlib.sha256(bootstrap_code.encode()).hexdigest()
+    async with async_session() as session:
+        result = await session.execute(
+            select(InviteCode).where(InviteCode.code_hash == code_hash)
+        )
+        if result.scalar_one_or_none():
+            return  # Already seeded
+
+        invite = InviteCode(
+            code_hash=code_hash,
+            max_uses=100,
+            times_used=0,
+            expires_at=datetime.utcnow() + timedelta(days=365),
+            created_by=None,
+        )
+        session.add(invite)
+        await session.commit()
+        logger.info("Seeded bootstrap invite code from INVITE_CODE env var")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.logging_config import setup_logging
@@ -65,6 +135,9 @@ async def lifespan(app: FastAPI):
     from scripts.seed_legislators import seed_legislators
     result = await seed_legislators()
     logger.info("Legislator seed: %d created, %d updated", result["created"], result["updated"])
+
+    # Seed bootstrap invite code from env var (idempotent)
+    await _seed_bootstrap_invite()
 
     if SCRAPE_ENABLED and SCRAPE_CRON:
         parts = SCRAPE_CRON.split()
@@ -85,7 +158,18 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
 
 
-app = FastAPI(title="CA Town Hall Tracker", lifespan=lifespan)
+import os as _os
+
+_is_production = _os.getenv("RAILWAY_ENVIRONMENT") or _os.getenv("NODE_ENV") == "production"
+
+app = FastAPI(
+    title="CA Town Hall Tracker",
+    lifespan=lifespan,
+    # Disable API docs in production
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
+    openapi_url=None if _is_production else "/openapi.json",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -94,6 +178,44 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if "server" in response.headers:
+        del response.headers["server"]
+    return response
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Assign a unique request ID to every request for log traceability."""
+    rid = generate_request_id()
+    token = request_id_var.set(rid)
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = rid
+    request_id_var.reset(token)
+    return response
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Return generic 422 without exposing field-level schema details."""
+    return JSONResponse(status_code=422, content={"detail": "Invalid request data"})
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch-all: log the real error, return generic 500."""
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 
 # ---------------------------------------------------------------------------
 # Health (public)
@@ -110,36 +232,110 @@ async def health():
 # ---------------------------------------------------------------------------
 
 
-class LoginRequest(BaseModel):
-    email: str
-    password: str
+class StrictBase(BaseModel):
+    """Base model that rejects unexpected fields."""
+    model_config = ConfigDict(extra="forbid")
 
 
-class RegisterRequest(BaseModel):
-    email: str
-    password: str
-    name: str
-    invite_code: str
+class LoginRequest(StrictBase):
+    email: EmailStr = Field(max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class RegisterRequest(StrictBase):
+    email: EmailStr = Field(max_length=254)
+    password: str = Field(min_length=10, max_length=128)
+    name: str = Field(min_length=1, max_length=100)
+    invite_code: str = Field(min_length=1, max_length=64)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return v.strip().lower()
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("invite_code", mode="before")
+    @classmethod
+    def strip_invite_code(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("password")
+    @classmethod
+    def check_breached(cls, v: str) -> str:
+        if is_breached_password(v):
+            raise ValueError("This password is too common and has appeared in data breaches")
+        return v
 
 
 @app.post("/api/auth/login")
-async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)):
+async def login(body: LoginRequest, request: Request, session: AsyncSession = Depends(get_session)):
+    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown")
+    ip = ip.split(",")[0].strip()
+
+    # Per-IP rate limit
+    retry = limiter.check_login_ip(ip)
+    if retry:
+        _log_security_event("login_rate_limit", "blocked", ip, body.email, reason="ip_limit")
+        raise HTTPException(status_code=429, detail="Too many login attempts", headers={"Retry-After": str(retry)})
+
+    # Per-account lock check
+    retry = limiter.check_account_lock(body.email)
+    if retry:
+        _log_security_event("login_rate_limit", "blocked", ip, body.email, reason="account_locked")
+        raise HTTPException(status_code=429, detail="Too many login attempts", headers={"Retry-After": str(retry)})
+
+    limiter.record_login_ip(ip)
+
     result = await session.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
-    if not user or not verify_password(body.password, user.hashed_password):
+    # Always run bcrypt even if user is None — prevents timing side-channel
+    if not verify_password_timing_safe(body.password, user):
+        limiter.record_failed_login(body.email)
+        _log_security_event("login", "failure", ip, body.email)
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    token = create_token(user.id, user.email)
-    return {"token": token, "user": {"id": user.id, "email": user.email, "name": user.name}}
+
+    limiter.clear_failed_logins(body.email)
+    _log_security_event("login", "success", ip, body.email)
+    access_token = create_access_token(user.id, user.email, user.token_version)
+    refresh_token = await create_refresh_token(user.id, session)
+    return {
+        "token": access_token,
+        "refresh_token": refresh_token,
+        "user": {"id": user.id, "email": user.email, "name": user.name},
+    }
 
 
 @app.post("/api/auth/register")
-async def register(body: RegisterRequest, session: AsyncSession = Depends(get_session)):
-    if body.invite_code != INVITE_CODE:
-        raise HTTPException(status_code=403, detail="Invalid invite code")
+async def register(body: RegisterRequest, request: Request, session: AsyncSession = Depends(get_session)):
+    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown")
+    ip = ip.split(",")[0].strip()
+
+    # Per-IP invite/register rate limit
+    retry = limiter.check_register_ip(ip)
+    if retry:
+        _log_security_event("register_rate_limit", "blocked", ip, body.email)
+        raise HTTPException(status_code=429, detail="Too many registration attempts", headers={"Retry-After": str(retry)})
+
+    limiter.record_register_ip(ip)
+
+    if not await validate_and_consume_invite(body.invite_code, ip, session):
+        _log_security_event("register", "failure", ip, body.email, reason="invalid_invite")
+        raise HTTPException(status_code=403, detail="Registration failed")
 
     existing = await session.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Email already registered")
+        # Same generic error as invalid invite — no way to distinguish
+        _log_security_event("register", "failure", ip, body.email, reason="duplicate_email")
+        raise HTTPException(status_code=403, detail="Registration failed")
 
     user = User(
         email=body.email,
@@ -150,13 +346,92 @@ async def register(body: RegisterRequest, session: AsyncSession = Depends(get_se
     await session.commit()
     await session.refresh(user)
 
-    token = create_token(user.id, user.email)
-    return {"token": token, "user": {"id": user.id, "email": user.email, "name": user.name}}
+    _log_security_event("register", "success", ip, body.email)
+    access_token = create_access_token(user.id, user.email, user.token_version)
+    refresh_token = await create_refresh_token(user.id, session)
+    return {
+        "token": access_token,
+        "refresh_token": refresh_token,
+        "user": {"id": user.id, "email": user.email, "name": user.name},
+    }
+
+
+class RefreshRequest(StrictBase):
+    refresh_token: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/api/auth/refresh")
+async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_session)):
+    result = await rotate_refresh_token(body.refresh_token, session)
+    if not result:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    return {
+        "token": result["access_token"],
+        "refresh_token": result["refresh_token"],
+        "user": result["user"],
+    }
+
+
+class ChangePasswordRequest(StrictBase):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=10, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def check_breached(cls, v: str) -> str:
+        if is_breached_password(v):
+            raise ValueError("This password is too common and has appeared in data breaches")
+        return v
+
+
+@app.post("/api/auth/change-password")
+async def change_password(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    if not verify_password(body.current_password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+    user.hashed_password = hash_password(body.new_password)
+    user.token_version += 1  # Invalidate all existing tokens
+    await revoke_all_user_tokens(user.id, session)
+    await session.commit()
+    return {"message": "Password changed. Please log in again."}
+
+
+@app.post("/api/auth/logout")
+async def logout(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await revoke_all_user_tokens(user.id, session)
+    return {"message": "Logged out"}
 
 
 @app.get("/api/auth/me")
 async def me(user: User = Depends(get_current_user)):
     return {"id": user.id, "email": user.email, "name": user.name}
+
+
+class CreateInviteRequest(StrictBase):
+    max_uses: int = Field(default=1, ge=1, le=100)
+    expiry_days: int = Field(default=7, ge=1, le=90)
+
+
+@app.post("/api/auth/invite-codes")
+async def create_invite_code(
+    body: CreateInviteRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    code = await generate_invite_code(
+        session,
+        created_by=user.id,
+        max_uses=body.max_uses,
+        expiry_days=body.expiry_days,
+    )
+    return {"invite_code": code, "max_uses": body.max_uses, "expiry_days": body.expiry_days}
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +522,8 @@ async def scrape_status(job_id: str, _user: User = Depends(get_current_user)):
         "ai_used": job["ai_used"],
         "ai_total_cost_usd": round(job["ai_total_cost"], 4),
         "past_events_removed": job["past_events_removed"],
+        # Indicate failure without exposing internal exception details
+        "has_error": bool(job.get("error")),
     }
 
 
@@ -292,7 +569,7 @@ async def scrape_logs(
                 "completed_at": _to_pacific_iso(log.completed_at),
                 "status": log.status,
                 "method_used": log.method_used,
-                "error_message": log.error_message,
+                "has_error": bool(log.error_message),
             }
             for log in logs
         ],
@@ -336,7 +613,7 @@ async def scrape_failures(
                 "official_website": leg.official_website,
                 "consecutive_failures": leg.consecutive_failures,
                 "circuit_open_until": _to_pacific_iso(leg.circuit_open_until),
-                "last_error": last_log.error_message if last_log else None,
+                "has_error": bool(last_log.error_message) if last_log else False,
                 "last_attempt": _to_pacific_iso(last_log.completed_at) if last_log else None,
             }
         )
@@ -437,7 +714,7 @@ async def scrape_summary(
                 "chamber": leg.chamber,
                 "district": leg.district,
                 "consecutive_failures": leg.consecutive_failures,
-                "last_error": last.error_message if last else None,
+                "has_error": bool(last.error_message) if last else False,
                 "last_attempt": _to_pacific_iso(last.completed_at) if last else None,
             }
         )

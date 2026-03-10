@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Header from "@/components/Header";
+import { secureFetch } from "@/app/lib/csrf";
+import { sanitizeUrl } from "@/app/lib/sanitize-url";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -300,7 +302,7 @@ export default function Home() {
     setProgressDetail("Initializing...");
 
     try {
-      const res = await fetch("/api/scrape/run", { method: "POST" });
+      const res = await secureFetch("/api/scrape/run", { method: "POST" });
       if (!res.ok) throw new Error("Failed to start scrape");
       const { job_id } = await res.json();
 
@@ -611,9 +613,9 @@ export default function Home() {
                               )}
                             </td>
                             <td style={{ whiteSpace: "nowrap" }}>
-                              {ev.source_url && (
+                              {sanitizeUrl(ev.source_url) && (
                                 <a
-                                  href={ev.source_url}
+                                  href={sanitizeUrl(ev.source_url)!}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   style={{ color: "#2563EB", textDecoration: "underline", fontSize: 13 }}

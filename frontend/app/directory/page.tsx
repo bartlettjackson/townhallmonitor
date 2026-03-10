@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Header from "@/components/Header";
+import { secureFetch } from "@/app/lib/csrf";
+import { sanitizeUrl } from "@/app/lib/sanitize-url";
 
 interface LegislatorItem {
   id: number;
@@ -158,7 +160,7 @@ export default function DirectoryPage() {
   async function handleRescrape(legId: number) {
     setScraping((s) => ({ ...s, [legId]: "running" }));
     try {
-      const res = await fetch(`/api/scrape/run/${legId}`, { method: "POST" });
+      const res = await secureFetch(`/api/scrape/run/${legId}`, { method: "POST" });
       if (!res.ok) throw new Error("Failed");
       const { job_id } = await res.json();
 
@@ -337,9 +339,9 @@ export default function DirectoryPage() {
                       <td style={{ color: "#374151" }}>{leg.district}</td>
                       <td style={{ color: "#374151" }}>{leg.party}</td>
                       <td>
-                        {leg.official_website && (
+                        {sanitizeUrl(leg.official_website) && (
                           <a
-                            href={leg.official_website}
+                            href={sanitizeUrl(leg.official_website)!}
                             target="_blank"
                             rel="noopener noreferrer"
                             style={{
