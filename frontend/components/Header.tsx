@@ -89,7 +89,7 @@ export default function Header() {
                   lineHeight: 1.2,
                 }}
               >
-                California Town Hall Tracker
+                California Town Hall Monitor
               </h1>
               <p style={{ fontSize: 12, color: "#93C5FD", margin: 0 }}>
                 Constituent Events Across the State Legislature

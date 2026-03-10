@@ -14,7 +14,7 @@ from app.scraper.event_data import EventData
 logger = logging.getLogger(__name__)
 
 USER_AGENT = (
-    "CA-TownHall-Tracker/1.0 "
+    "CA-TownHall-Monitor/1.0 "
     "(civic data collection; contact: github.com/bartlettjackson/ca-townhall-tracker)"
 )
 REQUEST_TIMEOUT = 30.0

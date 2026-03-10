@@ -163,7 +163,7 @@ import os as _os
 _is_production = _os.getenv("RAILWAY_ENVIRONMENT") or _os.getenv("NODE_ENV") == "production"
 
 app = FastAPI(
-    title="CA Town Hall Tracker",
+    title="CA Town Hall Monitor",
     lifespan=lifespan,
     # Disable API docs in production
     docs_url=None if _is_production else "/docs",

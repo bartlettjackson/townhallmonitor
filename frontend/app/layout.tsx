@@ -9,8 +9,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "California Town Hall Tracker",
-  description: "Track town hall events hosted by California state legislators",
+  title: "California Town Hall Monitor",
+  description: "Monitor town hall events hosted by California state legislators",
 };
 
 export default function RootLayout({

@@ -54,7 +54,7 @@ async def send_daily_digest(job: dict) -> None:
         return
 
     today = date.today().strftime("%B %d, %Y").replace(" 0", " ")
-    subject = f"CA Town Hall Tracker \u2014 Scrape Report {today}"
+    subject = f"CA Town Hall Monitor \u2014 Scrape Report {today}"
 
     total = job.get("total", 0)
     success = job.get("success", 0)
@@ -96,7 +96,7 @@ async def send_daily_digest(job: dict) -> None:
             </tr>
         </table>
         <p style="color: #6B7280; font-size: 12px;">
-            Automated report from CA Town Hall Tracker.
+            Automated report from CA Town Hall Monitor.
         </p>
     </div>
     """
@@ -110,7 +110,7 @@ async def send_failure_alert(job: dict) -> None:
         return
 
     today = date.today().strftime("%B %d, %Y").replace(" 0", " ")
-    subject = "CA Town Hall Tracker \u2014 High Failure Rate Alert"
+    subject = "CA Town Hall Monitor \u2014 High Failure Rate Alert"
 
     total = job.get("total", 0)
     failed = job.get("failed", 0)
@@ -129,7 +129,7 @@ async def send_failure_alert(job: dict) -> None:
         </ul>
         <p>Please check the <a href="#">Status Page</a> for details on failing legislators.</p>
         <p style="color: #6B7280; font-size: 12px;">
-            Automated alert from CA Town Hall Tracker.
+            Automated alert from CA Town Hall Monitor.
         </p>
     </div>
     """

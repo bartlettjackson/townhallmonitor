@@ -98,7 +98,7 @@ export default function RegisterPage() {
                 margin: 0,
               }}
             >
-              Town Hall Tracker
+              Town Hall Monitor
             </h1>
             <p style={{ fontSize: 14, color: "#6B7280", marginTop: 4 }}>
               Create your account

@@ -445,7 +445,7 @@ export default function Home() {
             <div className="quill-line" style={{ width: "60%", margin: "0 auto 8px" }} />
             <p className="preamble-text" style={{ maxWidth: 560, margin: "0 auto", fontSize: "clamp(11px, 1.2vw, 13px)" }}>
               of the State of California, in Order to form a more transparent Government,
-              do ordain and establish this Tracker for constituent events across the Legislature.
+              do ordain and establish this Monitor for constituent events across the Legislature.
             </p>
           </div>
         </section>
