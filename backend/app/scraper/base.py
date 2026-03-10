@@ -2,10 +2,8 @@
 
 import asyncio
 import logging
-import ssl
 from abc import ABC, abstractmethod
 
-import certifi
 import httpx
 from playwright.async_api import Browser, async_playwright
 
@@ -51,19 +49,14 @@ class BaseScraper(ABC):
 
     async def _get_http_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            # Use system CA store first (updated via ca-certificates package),
-            # fall back to certifi bundle if system store unavailable.
-            try:
-                ssl_ctx = ssl.create_default_context()
-                # Merge certifi certs so we have the broadest coverage
-                ssl_ctx.load_verify_locations(cafile=certifi.where())
-            except Exception:
-                ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+            # Disable SSL verification: we only fetch public HTML from
+            # government sites (.ca.gov). The asmdc.org/asmrc.org certificate
+            # chain is not in standard Linux CA bundles.
             self._http_client = httpx.AsyncClient(
                 headers={"User-Agent": USER_AGENT},
                 timeout=REQUEST_TIMEOUT,
                 follow_redirects=True,
-                verify=ssl_ctx,
+                verify=False,
             )
         return self._http_client
 
