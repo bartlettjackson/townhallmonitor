@@ -44,6 +44,7 @@ class BaseScraper(ABC):
         self._pw_context_manager = None
         self._last_request_at: float = 0.0
         self._last_final_url: str | None = None
+        self._dns_failed: bool = False
 
     # -- resource management --------------------------------------------------
 
@@ -97,10 +98,10 @@ class BaseScraper(ABC):
         self._last_request_at = asyncio.get_event_loop().time()
 
     async def _fetch_with_retry(self, url: str) -> httpx.Response | None:
-        """HTTP GET with retry on 5xx / timeout / connect errors.
+        """HTTP GET with retry on 5xx / timeout errors.
 
         Returns the Response on success, or None if all retries exhausted.
-        Non-retryable errors (4xx, other HTTP errors) return None immediately.
+        Non-retryable errors (4xx, DNS failures, other HTTP errors) return None immediately.
         """
         client = await self._get_http_client()
         last_exc: Exception | None = None
@@ -118,7 +119,23 @@ class BaseScraper(ABC):
                     url,
                     resp.status_code,
                 )
-            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            except httpx.ConnectError as exc:
+                exc_str = str(exc)
+                # DNS failures are permanent — don't retry
+                if "Name or service not known" in exc_str or "nodename nor servname" in exc_str:
+                    logger.warning("DNS resolution failed for %s: %s", url, exc)
+                    self._dns_failed = True
+                    return None
+                logger.warning(
+                    "Retry %d/%d: %s failed (%s: %s)",
+                    attempt,
+                    MAX_RETRIES,
+                    url,
+                    type(exc).__name__,
+                    exc,
+                )
+                last_exc = exc
+            except httpx.TimeoutException as exc:
                 logger.warning(
                     "Retry %d/%d: %s failed (%s: %s)",
                     attempt,
@@ -244,8 +261,16 @@ class BaseScraper(ABC):
     async def run(self, base_url: str) -> list[EventData]:
         """Try each candidate event path and return events from the first that yields results."""
         all_events: list[EventData] = []
+        self._dns_failed = False
         for url in self._event_page_urls(base_url):
             html = await self.fetch_page(url)
+            if self._dns_failed:
+                logger.info(
+                    "%s: all 5 paths returned no usable HTML for %s",
+                    self.name,
+                    base_url,
+                )
+                break  # domain doesn't resolve — skip remaining paths
             if html is None:
                 continue
             events = await self.extract_events(html, url)
