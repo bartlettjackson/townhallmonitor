@@ -16,28 +16,9 @@ from bs4 import BeautifulSoup, Tag
 from app.scraper.base import BaseScraper
 from app.scraper.event_data import EventData
 from app.scraper.filters import is_constituent_event
+from app.scraper.time_utils import _TIME_RE, extract_start_time
 
 logger = logging.getLogger(__name__)
-
-# Time range: "7:00 - 9:00pm" -> extracts start time + period from end
-_TIME_RANGE_RE = re.compile(
-    r"(\d{1,2}(?::\d{2})?)\s*(?:a\.m\.|p\.m\.|AM|PM|am|pm)?\s*[-\u2013]\s*"
-    r"\d{1,2}(?::\d{2})?\s*(a\.m\.|p\.m\.|AM|PM|am|pm)",
-    re.IGNORECASE,
-)
-# Single time: "9 a.m.", "10:30 AM", "2:00 p.m."
-_TIME_RE = re.compile(r"(\d{1,2}(?::\d{2})?\s*(?:a\.m\.|p\.m\.|AM|PM|am|pm))", re.IGNORECASE)
-
-
-def _extract_start_time(text: str) -> str | None:
-    """Extract the start time from a line, handling ranges like '7:00 - 9:00pm'."""
-    m = _TIME_RANGE_RE.search(text)
-    if m:
-        return f"{m.group(1)} {m.group(2)}"
-    m = _TIME_RE.search(text)
-    if m:
-        return m.group(1)
-    return None
 
 
 # Regex for CA addresses like "404 N 6th St." or "3031 Torrance Blvd."
@@ -163,7 +144,7 @@ class AsmDcScraper(BaseScraper):
 
         if not ev.time:
             for line in lines:
-                t = _extract_start_time(line)
+                t = extract_start_time(line)
                 if t:
                     ev.time = t
                     break

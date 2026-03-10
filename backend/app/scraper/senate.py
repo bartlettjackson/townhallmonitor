@@ -14,26 +14,9 @@ from bs4 import BeautifulSoup, Tag
 from app.scraper.base import BaseScraper
 from app.scraper.event_data import EventData
 from app.scraper.filters import is_constituent_event
+from app.scraper.time_utils import _TIME_RE, extract_start_time
 
 logger = logging.getLogger(__name__)
-
-_TIME_RANGE_RE = re.compile(
-    r"(\d{1,2}(?::\d{2})?)\s*(?:a\.m\.|p\.m\.|AM|PM|am|pm)?\s*[-\u2013]\s*"
-    r"\d{1,2}(?::\d{2})?\s*(a\.m\.|p\.m\.|AM|PM|am|pm)",
-    re.IGNORECASE,
-)
-_TIME_RE = re.compile(r"(\d{1,2}(?::\d{2})?\s*(?:a\.m\.|p\.m\.|AM|PM|am|pm))", re.IGNORECASE)
-
-
-def _extract_start_time(text: str) -> str | None:
-    """Extract the start time from text, handling ranges like '8 - 11am'."""
-    m = _TIME_RANGE_RE.search(text)
-    if m:
-        return f"{m.group(1)} {m.group(2)}"
-    m = _TIME_RE.search(text)
-    if m:
-        return m.group(1)
-    return None
 
 
 class SenateScraper(BaseScraper):
@@ -154,7 +137,7 @@ class SenateScraper(BaseScraper):
         date_field = soup.select_one(".field--name-field-date-of-event")
         if date_field and not ev.time:
             text = date_field.get_text(strip=True)
-            t = _extract_start_time(text)
+            t = extract_start_time(text)
             if t:
                 ev.time = t
 
@@ -162,7 +145,7 @@ class SenateScraper(BaseScraper):
 
         if not ev.time and lines:
             for line in lines:
-                t = _extract_start_time(line)
+                t = extract_start_time(line)
                 if t:
                     ev.time = t
                     break
