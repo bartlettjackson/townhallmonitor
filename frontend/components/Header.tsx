@@ -51,54 +51,18 @@ export default function Header() {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             {/* California Flag */}
-            <div
+            <img
+              src="/ca-flag.png"
+              alt="California Flag"
+              width={36}
+              height={24}
               style={{
-                width: 36,
-                height: 26,
-                borderRadius: 3,
-                overflow: "hidden",
                 flexShrink: 0,
+                borderRadius: 3,
                 boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
-                background: "#FFFFFF",
-                position: "relative",
+                objectFit: "cover",
               }}
-            >
-              {/* Red bottom stripe */}
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 0,
-                  width: "100%",
-                  height: "22%",
-                  background: "#BC2028",
-                }}
-              />
-              {/* Bear silhouette */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: "28%",
-                  left: "22%",
-                  width: "60%",
-                  height: "40%",
-                  background: "#8B4513",
-                  borderRadius: "40% 30% 30% 40%",
-                }}
-              />
-              {/* Red star */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: "12%",
-                  left: "10%",
-                  color: "#BC2028",
-                  fontSize: 10,
-                  lineHeight: 1,
-                }}
-              >
-                ★
-              </div>
-            </div>
+            />
             <div>
               <h1
                 style={{

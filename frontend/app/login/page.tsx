@@ -53,54 +53,19 @@ export default function LoginPage() {
         <div style={{ width: "100%", maxWidth: 400 }}>
           {/* Header */}
           <div style={{ textAlign: "center", marginBottom: 32 }}>
-            <div
+            <img
+              src="/ca-flag.png"
+              alt="California Flag"
+              width={48}
+              height={32}
               style={{
-                width: 48,
-                height: 34,
-                borderRadius: 4,
-                overflow: "hidden",
                 margin: "0 auto 16px",
+                display: "block",
+                borderRadius: 4,
                 boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
-                background: "#FFFFFF",
-                position: "relative",
+                objectFit: "cover",
               }}
-            >
-              {/* Red bottom stripe */}
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: 0,
-                  width: "100%",
-                  height: "22%",
-                  background: "#BC2028",
-                }}
-              />
-              {/* Bear silhouette */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: "28%",
-                  left: "22%",
-                  width: "60%",
-                  height: "40%",
-                  background: "#8B4513",
-                  borderRadius: "40% 30% 30% 40%",
-                }}
-              />
-              {/* Red star */}
-              <div
-                style={{
-                  position: "absolute",
-                  top: "12%",
-                  left: "10%",
-                  color: "#BC2028",
-                  fontSize: 13,
-                  lineHeight: 1,
-                }}
-              >
-                ★
-              </div>
-            </div>
+            />
             <h1
               style={{
                 fontSize: 22,
