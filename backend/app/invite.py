@@ -43,9 +43,7 @@ async def generate_invite_code(
     return raw_code
 
 
-async def validate_and_consume_invite(
-    code: str, ip: str, session: AsyncSession
-) -> bool:
+async def validate_and_consume_invite(code: str, ip: str, session: AsyncSession) -> bool:
     """Validate an invite code and consume one use.
 
     Returns True if valid, False otherwise.
@@ -53,9 +51,7 @@ async def validate_and_consume_invite(
     """
     code_hash = _hash_code(code)
 
-    result = await session.execute(
-        select(InviteCode).where(InviteCode.code_hash == code_hash)
-    )
+    result = await session.execute(select(InviteCode).where(InviteCode.code_hash == code_hash))
     invite = result.scalar_one_or_none()
 
     if not invite:

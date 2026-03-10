@@ -44,15 +44,13 @@ class RateLimiter:
         """Periodically prune stale buckets to prevent unbounded growth."""
         now = time.monotonic()
         stale = [
-            k for k, b in self._buckets.items()
+            k
+            for k, b in self._buckets.items()
             if not b.timestamps or (now - b.timestamps[-1]) > 3600
         ]
         for k in stale:
             del self._buckets[k]
-        stale_locks = [
-            email for email, unlock in self._account_locks.items()
-            if now > unlock
-        ]
+        stale_locks = [email for email, unlock in self._account_locks.items() if now > unlock]
         for email in stale_locks:
             del self._account_locks[email]
 
@@ -68,9 +66,7 @@ class RateLimiter:
         if bucket.count(window) >= 10:
             oldest_relevant = bucket.timestamps[0]
             retry_after = int(oldest_relevant + window - time.monotonic()) + 1
-            logger.warning(
-                "Rate limit: login IP %s exceeded 10 attempts in 15 min", ip
-            )
+            logger.warning("Rate limit: login IP %s exceeded 10 attempts in 15 min", ip)
             return max(retry_after, 1)
         return None
 
@@ -124,9 +120,7 @@ class RateLimiter:
         if bucket.count(window) >= 5:
             oldest_relevant = bucket.timestamps[0]
             retry_after = int(oldest_relevant + window - time.monotonic()) + 1
-            logger.warning(
-                "Rate limit: register IP %s exceeded 5 attempts in 1 hour", ip
-            )
+            logger.warning("Rate limit: register IP %s exceeded 5 attempts in 1 hour", ip)
             return max(retry_after, 1)
         return None
 

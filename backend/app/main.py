@@ -107,9 +107,7 @@ async def _seed_bootstrap_invite():
 
     code_hash = hashlib.sha256(bootstrap_code.encode()).hexdigest()
     async with async_session() as session:
-        result = await session.execute(
-            select(InviteCode).where(InviteCode.code_hash == code_hash)
-        )
+        result = await session.execute(select(InviteCode).where(InviteCode.code_hash == code_hash))
         if result.scalar_one_or_none():
             return  # Already seeded
 
@@ -133,6 +131,7 @@ async def lifespan(app: FastAPI):
 
     # Auto-seed legislators on startup (idempotent)
     from scripts.seed_legislators import seed_legislators
+
     result = await seed_legislators()
     logger.info("Legislator seed: %d created, %d updated", result["created"], result["updated"])
 
@@ -232,6 +231,7 @@ async def health():
 
 class StrictBase(BaseModel):
     """Base model that rejects unexpected fields."""
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -276,20 +276,26 @@ class RegisterRequest(StrictBase):
 
 @app.post("/api/auth/login")
 async def login(body: LoginRequest, request: Request, session: AsyncSession = Depends(get_session)):
-    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown")
+    ip = request.headers.get(
+        "x-forwarded-for", request.client.host if request.client else "unknown"
+    )
     ip = ip.split(",")[0].strip()
 
     # Per-IP rate limit
     retry = limiter.check_login_ip(ip)
     if retry:
         _log_security_event("login_rate_limit", "blocked", ip, body.email, reason="ip_limit")
-        raise HTTPException(status_code=429, detail="Too many login attempts", headers={"Retry-After": str(retry)})
+        raise HTTPException(
+            status_code=429, detail="Too many login attempts", headers={"Retry-After": str(retry)}
+        )
 
     # Per-account lock check
     retry = limiter.check_account_lock(body.email)
     if retry:
         _log_security_event("login_rate_limit", "blocked", ip, body.email, reason="account_locked")
-        raise HTTPException(status_code=429, detail="Too many login attempts", headers={"Retry-After": str(retry)})
+        raise HTTPException(
+            status_code=429, detail="Too many login attempts", headers={"Retry-After": str(retry)}
+        )
 
     limiter.record_login_ip(ip)
 
@@ -313,15 +319,23 @@ async def login(body: LoginRequest, request: Request, session: AsyncSession = De
 
 
 @app.post("/api/auth/register")
-async def register(body: RegisterRequest, request: Request, session: AsyncSession = Depends(get_session)):
-    ip = request.headers.get("x-forwarded-for", request.client.host if request.client else "unknown")
+async def register(
+    body: RegisterRequest, request: Request, session: AsyncSession = Depends(get_session)
+):
+    ip = request.headers.get(
+        "x-forwarded-for", request.client.host if request.client else "unknown"
+    )
     ip = ip.split(",")[0].strip()
 
     # Per-IP invite/register rate limit
     retry = limiter.check_register_ip(ip)
     if retry:
         _log_security_event("register_rate_limit", "blocked", ip, body.email)
-        raise HTTPException(status_code=429, detail="Too many registration attempts", headers={"Retry-After": str(retry)})
+        raise HTTPException(
+            status_code=429,
+            detail="Too many registration attempts",
+            headers={"Retry-After": str(retry)},
+        )
 
     limiter.record_register_ip(ip)
 
@@ -881,7 +895,15 @@ async def export_events(
     from openpyxl.styles import Font
 
     wb = Workbook()
-    headers = ["NAME", "DATE", "TIME", "ADDRESS", "TITLE OF EVENT", "EVENT LINK", "ADDITIONAL DETAILS"]
+    headers = [
+        "NAME",
+        "DATE",
+        "TIME",
+        "ADDRESS",
+        "TITLE OF EVENT",
+        "EVENT LINK",
+        "ADDITIONAL DETAILS",
+    ]
     bold = Font(bold=True)
 
     assembly_events = [ev for ev in events if ev.legislator.chamber == "assembly"]

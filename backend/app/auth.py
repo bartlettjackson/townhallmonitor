@@ -25,8 +25,11 @@ REFRESH_TOKEN_DAYS = 7
 # Refuse to start with a weak secret in production
 if len(AUTH_SECRET_KEY) < 32:
     import os
+
     if os.getenv("RAILWAY_ENVIRONMENT"):
-        raise RuntimeError("AUTH_SECRET_KEY must be ≥32 chars (256-bit). Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\"")
+        raise RuntimeError(
+            'AUTH_SECRET_KEY must be ≥32 chars (256-bit). Generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))"'
+        )
     logger.warning("AUTH_SECRET_KEY is shorter than 32 chars — use a ≥256-bit secret in production")
 
 security = HTTPBearer()
@@ -91,9 +94,7 @@ async def rotate_refresh_token(old_raw_token: str, session: AsyncSession) -> dic
     """
     old_hash = _hash_refresh_token(old_raw_token)
 
-    result = await session.execute(
-        select(RefreshToken).where(RefreshToken.token_hash == old_hash)
-    )
+    result = await session.execute(select(RefreshToken).where(RefreshToken.token_hash == old_hash))
     rt = result.scalar_one_or_none()
 
     if not rt:
@@ -129,9 +130,7 @@ async def rotate_refresh_token(old_raw_token: str, session: AsyncSession) -> dic
 
 async def revoke_all_user_tokens(user_id: int, session: AsyncSession):
     """Delete all refresh tokens for a user (logout-all / password change)."""
-    await session.execute(
-        delete(RefreshToken).where(RefreshToken.user_id == user_id)
-    )
+    await session.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
     await session.commit()
 
 

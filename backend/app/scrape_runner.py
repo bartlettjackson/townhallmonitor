@@ -91,7 +91,9 @@ async def _execute_scrape(job_id: str):
                         # Re-attach legislator to this session
                         leg_in_session = await sess.get(Legislator, leg.id)
                         if leg_in_session is None:
-                            logger.error("Legislator %d (%s) not found in session", leg.id, leg.name)
+                            logger.error(
+                                "Legislator %d (%s) not found in session", leg.id, leg.name
+                            )
                             job["failed"] += 1
                             job["completed_count"] += 1
                             return

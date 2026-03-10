@@ -70,8 +70,10 @@ def setup_logging() -> None:
         handler.setFormatter(JSONFormatter())
     else:
         handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s — %(message)s",
-                              defaults={"request_id": "-"})
+            logging.Formatter(
+                "%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s — %(message)s",
+                defaults={"request_id": "-"},
+            )
         )
 
     root.addHandler(handler)
