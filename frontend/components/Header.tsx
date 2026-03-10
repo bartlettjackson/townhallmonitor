@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 
 const NAV_LINKS = [
   { href: "/", label: "Events" },
@@ -121,34 +122,24 @@ export default function Header() {
               {NAV_LINKS.map((link) => {
                 const isActive = pathname === link.href;
                 return (
-                  <button
+                  <Link
                     key={link.href}
-                    onClick={() => router.push(link.href)}
+                    href={link.href}
                     style={{
                       padding: "6px 14px",
                       borderRadius: 8,
                       fontSize: 14,
                       fontWeight: 500,
-                      border: "none",
-                      cursor: "pointer",
+                      textDecoration: "none",
                       background: isActive
                         ? "rgba(255,255,255,0.2)"
                         : "transparent",
                       color: "white",
                       transition: "background 0.2s",
                     }}
-                    onMouseOver={(e) => {
-                      if (!isActive)
-                        e.currentTarget.style.background =
-                          "rgba(255,255,255,0.1)";
-                    }}
-                    onMouseOut={(e) => {
-                      if (!isActive)
-                        e.currentTarget.style.background = "transparent";
-                    }}
                   >
                     {link.label}
-                  </button>
+                  </Link>
                 );
               })}
             </nav>
