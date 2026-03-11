@@ -183,14 +183,16 @@ export default function StatusPage() {
   }
 
   const s = summary;
-  const total = s ? s.success + s.no_events + s.failed + s.skipped : 0;
-  const successRate =
-    total > 0 ? Math.round(((s?.success || 0) / total) * 100) : 0;
+  const total = s ? s.total_legislators : 0;
+  const errors = s ? s.failed : 0;
+  const healthRate =
+    total > 0 ? Math.round(((total - errors) / total) * 100) : 0;
 
   return (
     <>
       <Header />
 
+      <main id="main-content">
       <div style={{ maxWidth: "80rem", margin: "0 auto", padding: "24px" }}>
         <h2
           style={{
@@ -220,14 +222,16 @@ export default function StatusPage() {
             sub={s?.duration_seconds ? fmtDuration(s.duration_seconds) : undefined}
           />
           <SummaryCard
-            label="Total Legislators"
-            value={s?.total_legislators || 0}
+            label="Legislators with Events"
+            value={`${s?.success || 0} of ${total}`}
+            sub="have upcoming constituent events"
+            color="#1E40AF"
           />
           <SummaryCard
-            label="Success Rate"
-            value={`${successRate}%`}
-            sub={`${s?.success || 0} success, ${s?.no_events || 0} no events`}
-            color={successRate > 70 ? "#03543F" : successRate > 40 ? "#92400E" : "#9B1C1C"}
+            label="Scraper Health"
+            value={`${healthRate}%`}
+            sub={`${errors} error${errors !== 1 ? "s" : ""} in last run`}
+            color={healthRate > 95 ? "#03543F" : healthRate > 80 ? "#92400E" : "#9B1C1C"}
           />
           <SummaryCard
             label="AI Assisted"
@@ -580,6 +584,7 @@ export default function StatusPage() {
           )}
         </div>
       </div>
+      </main>
 
       <div className="rwb-stripe" />
     </>

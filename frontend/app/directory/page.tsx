@@ -32,23 +32,41 @@ function fmtTimestamp(iso: string): string {
 }
 
 function statusBadge(status: string | null) {
-  const colors: Record<string, { bg: string; text: string }> = {
-    success: { bg: "#DEF7EC", text: "#03543F" },
-    no_events: { bg: "#FEF3C7", text: "#92400E" },
-    failed: { bg: "#FDE8E8", text: "#9B1C1C" },
-    skipped: { bg: "#E5E7EB", text: "#4B5563" },
-    event_page_elsewhere: { bg: "#DBEAFE", text: "#1E40AF" },
+  const config: Record<string, { bg: string; text: string; label: string; tip: string }> = {
+    success: {
+      bg: "#DEF7EC", text: "#065F46",
+      label: "Events Found",
+      tip: "The scraper found upcoming constituent events on this legislator\u2019s website.",
+    },
+    no_events: {
+      bg: "#F3F4F6", text: "#374151",
+      label: "No Events",
+      tip: "The scraper ran successfully but found no upcoming events listed.",
+    },
+    failed: {
+      bg: "#FDE8E8", text: "#991B1B",
+      label: "Scrape Error",
+      tip: "The scraper was unable to read this legislator\u2019s events page. Click Re-scrape to retry.",
+    },
+    skipped: {
+      bg: "#F3F4F6", text: "#374151",
+      label: "Skipped",
+      tip: "This legislator was skipped during the last scrape run.",
+    },
+    event_page_elsewhere: {
+      bg: "#DBEAFE", text: "#1E40AF",
+      label: "Event Page Elsewhere",
+      tip: "Events for this legislator are hosted on an external site.",
+    },
   };
-  const labels: Record<string, string> = {
-    success: "success",
-    no_events: "no_events",
-    failed: "failed",
-    skipped: "skipped",
-    event_page_elsewhere: "Event Page Elsewhere",
+  const c = config[status || ""] || {
+    bg: "#F3F4F6", text: "#374151",
+    label: status || "Never",
+    tip: "No scrape has been attempted for this legislator yet.",
   };
-  const c = colors[status || ""] || { bg: "#F3F4F6", text: "#6B7280" };
   return (
     <span
+      title={c.tip}
       style={{
         display: "inline-block",
         padding: "2px 8px",
@@ -57,9 +75,10 @@ function statusBadge(status: string | null) {
         fontWeight: 600,
         background: c.bg,
         color: c.text,
+        cursor: "help",
       }}
     >
-      {labels[status || ""] || status || "never"}
+      {c.label}
     </span>
   );
 }
@@ -195,6 +214,7 @@ export default function DirectoryPage() {
     <>
       <Header />
 
+      <main id="main-content">
       <div style={{ maxWidth: "80rem", margin: "0 auto", padding: "24px" }}>
         <h2
           style={{
@@ -403,6 +423,7 @@ export default function DirectoryPage() {
           )}
         </div>
       </div>
+      </main>
 
       <div className="rwb-stripe" />
     </>

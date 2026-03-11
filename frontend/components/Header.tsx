@@ -139,11 +139,38 @@ export default function Header() {
                       borderRadius: 8,
                       boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
                       border: "1px solid #E5E7EB",
-                      minWidth: 140,
+                      minWidth: 170,
                       zIndex: 50,
                       overflow: "hidden",
                     }}
                   >
+                    {[
+                      { href: "/settings?tab=filters", label: "Saved Filters" },
+                      { href: "/settings?tab=notifications", label: "Notifications" },
+                      { href: "/settings?tab=account", label: "Account" },
+                    ].map((item) => (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        onClick={() => setShowUserMenu(false)}
+                        style={{
+                          display: "block",
+                          padding: "10px 16px",
+                          fontSize: 14,
+                          color: "#374151",
+                          textDecoration: "none",
+                        }}
+                        onMouseOver={(e) =>
+                          (e.currentTarget.style.background = "#F3F4F6")
+                        }
+                        onMouseOut={(e) =>
+                          (e.currentTarget.style.background = "none")
+                        }
+                      >
+                        {item.label}
+                      </Link>
+                    ))}
+                    <hr style={{ margin: 0, border: "none", borderTop: "1px solid #E5E7EB" }} />
                     <button
                       onClick={handleLogout}
                       style={{

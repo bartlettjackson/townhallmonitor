@@ -28,7 +28,10 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className={inter.className}>{children}</body>
+      <body className={inter.className}>
+        <a href="#main-content" className="sr-only">Skip to main content</a>
+        {children}
+      </body>
     </html>
   );
 }

@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import Header from "@/components/Header";
 import { secureFetch } from "@/app/lib/csrf";
 import { sanitizeUrl } from "@/app/lib/sanitize-url";
+
+const SAVED_FILTERS_KEY = "townhall_saved_filters";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,6 +82,99 @@ function formatLegislatorName(ev: EventItem): string {
 
 
 // ---------------------------------------------------------------------------
+// Address formatting
+// ---------------------------------------------------------------------------
+
+interface ParsedAddress {
+  label: string | null;     // e.g. "District Office"
+  street: string | null;    // e.g. "2151 Salvio Street, Suite R"
+  cityStateZip: string | null; // e.g. "Concord, CA 94520"
+  raw: string;
+}
+
+function parseAddress(raw: string): ParsedAddress {
+  // Strip phone / fax / tel / office-hours noise
+  let cleaned = raw
+    .replace(/\b(Phone|Tel|Telephone|Fax|Office\s*hours?)\s*[:.]?\s*[\d()\-.\s]+/gi, "")
+    .trim();
+
+  // Extract a location label prefix (e.g. "District Office:", "Capitol Office:")
+  let label: string | null = null;
+  const labelMatch = cleaned.match(
+    /^((?:District|Capitol|Field|Regional|Satellite)\s+Office)\s*[:–—-]\s*/i
+  );
+  if (labelMatch) {
+    label = labelMatch[1];
+    cleaned = cleaned.slice(labelMatch[0].length).trim();
+  }
+
+  // Try to split at city/state/zip boundary: "City, CA 94520"
+  const zipMatch = cleaned.match(
+    /^(.*?)([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,?\s+CA\s+\d{5}(?:-\d{4})?)(.*)$/
+  );
+
+  if (zipMatch) {
+    const street = zipMatch[1].replace(/,\s*$/, "").trim() || null;
+    const cityStateZip = zipMatch[2].trim();
+    return { label, street, cityStateZip, raw };
+  }
+
+  // Fallback: no zip found — try splitting on last comma before "CA"
+  const caMatch = cleaned.match(/^(.*),\s*(.*CA.*)$/i);
+  if (caMatch) {
+    return {
+      label,
+      street: caMatch[1].trim() || null,
+      cityStateZip: caMatch[2].trim(),
+      raw,
+    };
+  }
+
+  // Can't parse — return raw with label extracted if found
+  return { label, street: cleaned || null, cityStateZip: null, raw };
+}
+
+function FormattedAddress({ address }: { address: string }) {
+  const p = parseAddress(address);
+  const mapParts = [p.street, p.cityStateZip].filter(Boolean).join(", ");
+  const mapsUrl = mapParts
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapParts)}`
+    : null;
+
+  return (
+    <div style={{ lineHeight: 1.5, fontSize: 13 }}>
+      {p.label && (
+        <div style={{ fontWeight: 600, color: "#374151" }}>
+          <span style={{ color: "#9CA3AF" }}>&#128205; </span>
+          {p.label}
+        </div>
+      )}
+      {!p.label && <span style={{ color: "#9CA3AF" }}>&#128205; </span>}
+      {mapsUrl ? (
+        <a
+          href={mapsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: "var(--patriot-blue)", textDecoration: "underline" }}
+        >
+          {p.street && <span>{p.street}</span>}
+          {p.street && p.cityStateZip && <br />}
+          {p.cityStateZip && <span>{p.cityStateZip}</span>}
+        </a>
+      ) : (
+        <>
+          {p.street && <span style={{ color: "#374151" }}>{p.street}</span>}
+          {p.street && p.cityStateZip && <br />}
+          {p.cityStateZip && (
+            <span style={{ color: "#374151" }}>{p.cityStateZip}</span>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sample data for demo mode
 // ---------------------------------------------------------------------------
 
@@ -99,24 +195,61 @@ const SAMPLE_EVENTS: EventItem[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Date helpers
+// ---------------------------------------------------------------------------
+
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function addDaysIso(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function endOfWeekIso(): string {
+  const d = new Date();
+  const dayOfWeek = d.getDay(); // 0=Sun
+  d.setDate(d.getDate() + (7 - dayOfWeek));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+type DatePreset = "week" | "30" | "90" | "all" | null;
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 const PAGE_SIZE = 50;
 
-export default function Home() {
+function HomeContent() {
+  const searchParams = useSearchParams();
+
   // Data state
   const [events, setEvents] = useState<EventItem[]>([]);
   const [totalEvents, setTotalEvents] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  // Filter state
-  const [chamber, setChamber] = useState("all");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [search, setSearch] = useState("");
-  const [eventType, setEventType] = useState("all");
+  // Filter state — hydrate from URL params if present (for Apply links from saved filters)
+  const [chamber, setChamber] = useState(() => searchParams.get("chamber") || "all");
+  const [dateFrom, setDateFrom] = useState(() => searchParams.get("start_date") || todayIso());
+  const [dateTo, setDateTo] = useState(() => searchParams.get("end_date") || addDaysIso(30));
+  const [search, setSearch] = useState(() => searchParams.get("search") || "");
+  const [eventType, setEventType] = useState(() => searchParams.get("event_type") || "all");
+  const [datePreset, setDatePreset] = useState<DatePreset>(() => {
+    const p = searchParams.get("date_preset") as DatePreset;
+    if (p && ["week", "30", "90", "all"].includes(p)) return p;
+    // If URL has custom dates, no preset
+    if (searchParams.get("start_date") || searchParams.get("end_date")) return null;
+    return "30";
+  });
+
+  // Save-filter modal
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveFilterName, setSaveFilterName] = useState("");
 
   // Sort state
   const [sortCol, setSortCol] = useState<SortColumn>("date");
@@ -125,8 +258,8 @@ export default function Home() {
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Expanded detail rows (track by event id)
-  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  // Detail modal
+  const [detailEvent, setDetailEvent] = useState<EventItem | null>(null);
 
   // Progress / scrape state
   const [scrapeRunning, setScrapeRunning] = useState(false);
@@ -137,6 +270,10 @@ export default function Home() {
 
   // Footer stats
   const [legislatorCount, setLegislatorCount] = useState(0);
+
+  // Refresh confirmation + toast
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -298,6 +435,7 @@ export default function Home() {
 
   // ---- Generate Report (scrape) ----
   async function handleGenerateReport() {
+    setShowConfirm(false);
     setScrapeRunning(true);
     setShowProgress(true);
     setProgressPct(0);
@@ -345,6 +483,11 @@ export default function Home() {
             setTimeout(() => {
               setShowProgress(false);
               setScrapeRunning(false);
+              if (job.status === "completed") {
+                const newCount = job.success || 0;
+                setToast(`Refresh complete. ${newCount} legislator${newCount !== 1 ? "s" : ""} with new events found.`);
+                setTimeout(() => setToast(null), 5000);
+              }
             }, 1500);
           }
         } catch {
@@ -370,6 +513,33 @@ export default function Home() {
     if (search) params.set("search", search);
     if (eventType !== "all") params.set("event_type", eventType);
     window.location.href = `/api/events/export?${params}`;
+  }
+
+  // ---- Save filter ----
+  function handleSaveFilter() {
+    if (!saveFilterName.trim()) return;
+    const filter = {
+      id: Date.now().toString(),
+      name: saveFilterName.trim(),
+      chamber,
+      datePreset,
+      dateFrom,
+      dateTo,
+      eventType,
+      search,
+    };
+    try {
+      const raw = localStorage.getItem(SAVED_FILTERS_KEY);
+      const existing = raw ? JSON.parse(raw) : [];
+      existing.push(filter);
+      localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(existing));
+    } catch {
+      /* localStorage full or unavailable */
+    }
+    setSaveFilterName("");
+    setShowSaveModal(false);
+    setToast("Filter saved!");
+    setTimeout(() => setToast(null), 3000);
   }
 
   // ---- Sort indicator ----
@@ -403,16 +573,17 @@ export default function Home() {
           <button
             className="btn-patriot-red"
             style={{ padding: "8px 16px", borderRadius: 8, fontWeight: 600, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}
-            onClick={handleGenerateReport}
+            onClick={() => setShowConfirm(true)}
             disabled={scrapeRunning}
+            title="Re-scrape all 120 legislator websites for new events. This may take several minutes."
           >
             {scrapeRunning ? (
               <>
                 <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid rgba(255,255,255,0.3)", borderTop: "2px solid white", borderRadius: "50%" }} className="spinner" />
-                Running...
+                Refreshing...
               </>
             ) : (
-              <>&#8635; Generate New Report</>
+              <>&#8635; Refresh All Data</>
             )}
           </button>
         </div>
@@ -437,16 +608,17 @@ export default function Home() {
         </div>
       )}
 
+      <main id="main-content">
       {/* Parchment Hero */}
-      <div style={{ maxWidth: "80rem", margin: "0 auto", padding: "0 24px" }}>
-        <section className="parchment-hero" style={{ marginTop: 20, marginBottom: 20, padding: "16px 32px", position: "relative" }}>
+      <div className="parchment-section" style={{ maxWidth: "80rem", margin: "0 auto", padding: "0 24px" }}>
+        <section className="parchment-hero" style={{ marginTop: 16, marginBottom: 16, padding: "14px 32px" }}>
           <div className="seal-watermark" />
           <div style={{ position: "relative", zIndex: 1, textAlign: "center" }}>
             <div className="we-the-people" style={{ fontSize: "clamp(32px, 5vw, 52px)", marginBottom: 6 }}>
               We the People
             </div>
             <div className="quill-line" style={{ width: "60%", margin: "0 auto 8px" }} />
-            <p className="preamble-text" style={{ maxWidth: 560, margin: "0 auto", fontSize: "clamp(11px, 1.2vw, 13px)" }}>
+            <p className="preamble-text" style={{ margin: 0, textAlign: "center", fontSize: 13 }}>
               of the State of California, in Order to form a more transparent Government,
               do ordain and establish this Monitor for constituent events across the Legislature.
             </p>
@@ -455,11 +627,11 @@ export default function Home() {
       </div>
 
       {/* Filter Bar */}
-      <div style={{ maxWidth: "80rem", margin: "0 auto", padding: "0 24px", marginBottom: 16 }}>
+      <div role="search" aria-label="Filter events" style={{ maxWidth: "80rem", margin: "0 auto", padding: "0 24px", marginBottom: 16 }}>
         <div className="card" style={{ padding: "16px 20px" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 16 }}>
+          <div className="filter-bar-inner" style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 16 }}>
             {/* Chamber */}
-            <div>
+            <div className="filter-group-chamber">
               <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
                 Chamber
               </label>
@@ -476,34 +648,75 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Date From */}
-            <div>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
-                From
-              </label>
-              <input
-                type="date"
-                className="filter-input"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-              />
+            {/* Date Pickers */}
+            <div className="filter-dates">
+              <div>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                  From
+                </label>
+                <input
+                  type="date"
+                  className="filter-input"
+                  aria-label="Filter by start date"
+                  value={dateFrom}
+                  onChange={(e) => { setDateFrom(e.target.value); setDatePreset(null); }}
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                  To
+                </label>
+                <input
+                  type="date"
+                  className="filter-input"
+                  aria-label="Filter by end date"
+                  value={dateTo}
+                  onChange={(e) => { setDateTo(e.target.value); setDatePreset(null); }}
+                />
+              </div>
             </div>
 
-            {/* Date To */}
+            {/* Date Quick Select */}
             <div>
               <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
-                To
+                Range
               </label>
-              <input
-                type="date"
-                className="filter-input"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-              />
+              <div style={{ display: "flex", gap: 4 }}>
+                {([
+                  { key: "week" as DatePreset, label: "This Week" },
+                  { key: "30" as DatePreset, label: "30 Days" },
+                  { key: "90" as DatePreset, label: "90 Days" },
+                  { key: "all" as DatePreset, label: "All" },
+                ]).map(({ key, label }) => (
+                  <button
+                    key={key}
+                    className={`chamber-btn${datePreset === key ? " active" : ""}`}
+                    style={{ fontSize: 13, padding: "4px 10px" }}
+                    onClick={() => {
+                      setDatePreset(key);
+                      if (key === "week") {
+                        setDateFrom(todayIso());
+                        setDateTo(endOfWeekIso());
+                      } else if (key === "30") {
+                        setDateFrom(todayIso());
+                        setDateTo(addDaysIso(30));
+                      } else if (key === "90") {
+                        setDateFrom(todayIso());
+                        setDateTo(addDaysIso(90));
+                      } else {
+                        setDateFrom("");
+                        setDateTo("");
+                      }
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Search */}
-            <div style={{ flex: 1, minWidth: 180, maxWidth: 280 }}>
+            <div className="filter-group-search" style={{ flex: 1, minWidth: 180, maxWidth: 280 }}>
               <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
                 Search
               </label>
@@ -512,6 +725,7 @@ export default function Home() {
                 className="filter-input"
                 style={{ width: "100%" }}
                 placeholder="Name, location, topic..."
+                aria-label="Search events by name, location, or topic"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -525,6 +739,7 @@ export default function Home() {
               <select
                 className="filter-input"
                 style={{ paddingRight: 28 }}
+                aria-label="Filter by event type"
                 value={eventType}
                 onChange={(e) => setEventType(e.target.value)}
               >
@@ -538,20 +753,100 @@ export default function Home() {
               </select>
             </div>
 
-            {/* Export */}
-            <div style={{ marginLeft: "auto" }}>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "transparent", marginBottom: 6 }}>
-                Export
-              </label>
-              <button
-                className="btn-patriot-blue"
-                style={{ padding: "6px 16px", borderRadius: 8, fontWeight: 500, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}
-                onClick={handleExport}
-              >
-                &#11015; Download Excel
-              </button>
+            {/* Save & Export */}
+            <div className="filter-actions" style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "flex-end" }}>
+              <div>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "transparent", marginBottom: 6 }}>
+                  Save
+                </label>
+                <button
+                  className="btn-patriot-blue"
+                  style={{ padding: "6px 12px", borderRadius: 8, fontWeight: 500, fontSize: 14 }}
+                  onClick={() => setShowSaveModal(true)}
+                  title="Save current filters"
+                >
+                  &#9733; Save Filters
+                </button>
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "transparent", marginBottom: 6 }}>
+                  Export
+                </label>
+                <button
+                  className="btn-patriot-blue"
+                  style={{ padding: "6px 16px", borderRadius: 8, fontWeight: 500, fontSize: 14, display: "flex", alignItems: "center", gap: 6 }}
+                  onClick={handleExport}
+                >
+                  &#11015; Download Excel
+                </button>
+              </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Results Count + Active Filters */}
+      <div
+        style={{ maxWidth: "80rem", margin: "0 auto", padding: "0 24px" }}
+      >
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            fontSize: 14,
+            color: "#6B7280",
+            marginBottom: 12,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span>
+            {events.length === 0
+              ? "No events match your filters."
+              : `Showing ${totalEvents} event${totalEvents !== 1 ? "s" : ""} from ${legislatorCount} legislator${legislatorCount !== 1 ? "s" : ""}`}
+          </span>
+          {/* Active filter chips */}
+          {events.length > 0 && (
+            <>
+              <span style={{ color: "#D1D5DB" }}>&middot;</span>
+              {/* Chamber chip */}
+              {chamber !== "all" ? (
+                <span className="filter-chip">
+                  {chamber === "assembly" ? "Assembly" : "Senate"}
+                  <button aria-label="Remove chamber filter" className="filter-chip-x" onClick={() => setChamber("all")}>&times;</button>
+                </span>
+              ) : (
+                <span className="filter-chip filter-chip-default">All Chambers</span>
+              )}
+              {/* Date chip */}
+              {datePreset === "all" || (!dateFrom && !dateTo) ? (
+                <span className="filter-chip filter-chip-default">All Dates</span>
+              ) : (
+                <span className="filter-chip">
+                  {datePreset === "week" ? "This Week" : datePreset === "30" ? "Next 30 Days" : datePreset === "90" ? "Next 90 Days" : `${dateFrom} – ${dateTo}`}
+                  <button aria-label="Remove date filter" className="filter-chip-x" onClick={() => { setDateFrom(""); setDateTo(""); setDatePreset("all"); }}>&times;</button>
+                </span>
+              )}
+              {/* Event type chip */}
+              {eventType !== "all" ? (
+                <span className="filter-chip">
+                  {eventType}
+                  <button aria-label="Remove event type filter" className="filter-chip-x" onClick={() => setEventType("all")}>&times;</button>
+                </span>
+              ) : (
+                <span className="filter-chip filter-chip-default">All Types</span>
+              )}
+              {/* Search chip */}
+              {search && (
+                <span className="filter-chip">
+                  Search: &ldquo;{search}&rdquo;
+                  <button aria-label="Clear search" className="filter-chip-x" onClick={() => setSearch("")}>&times;</button>
+                </span>
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -566,11 +861,12 @@ export default function Home() {
               if (chamberEvents.length === 0) return null;
               const label = ch === "assembly" ? "Assembly" : "Senate";
               return (
-                <div key={ch} className="card" style={{ overflow: "hidden", marginBottom: 16 }}>
+                <div key={ch} className="card" style={{ overflow: "hidden", marginBottom: 16 }} role="region" aria-label={`${label} events`}>
                   <div style={{ padding: "10px 16px", background: "var(--patriot-blue)", color: "white", fontWeight: 700, fontSize: 15, letterSpacing: "0.02em" }}>
                     {label}
                   </div>
-                  <div className="table-scroll" style={{ overflowX: "auto" }}>
+                  {/* Desktop table */}
+                  <div className="events-table-wrap table-scroll" style={{ overflowX: "auto" }}>
                     <table style={{ width: "100%", minWidth: 900, borderCollapse: "collapse" }}>
                       <thead>
                         <tr className="table-header">
@@ -602,12 +898,9 @@ export default function Home() {
                             <td style={{ color: "#374151", maxWidth: 280 }}>
                               {ev.is_virtual ? (
                                 ev.address || "Virtual"
-                              ) : (
-                                <>
-                                  {ev.address && <span style={{ color: "#9CA3AF" }}>&#128205; </span>}
-                                  {ev.address}
-                                </>
-                              )}
+                              ) : ev.address ? (
+                                <FormattedAddress address={ev.address} />
+                              ) : null}
                             </td>
                             <td style={{ color: "#111827", fontWeight: 500 }}>
                               {ev.title}
@@ -627,37 +920,87 @@ export default function Home() {
                                 </a>
                               )}
                             </td>
-                            <td style={{ color: "#4B5563", maxWidth: 320 }}>
-                              {ev.additional_details && ev.additional_details.length > 120 ? (
-                                expandedRows.has(ev.id) ? (
-                                  <>
+                            <td style={{ color: "#4B5563", maxWidth: 280 }}>
+                              {ev.additional_details ? (
+                                <>
+                                  <span style={{
+                                    display: "-webkit-box",
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: "vertical",
+                                    overflow: "hidden",
+                                    fontSize: 13,
+                                  }}>
                                     {ev.additional_details}
+                                  </span>
+                                  {ev.additional_details.length > 80 && (
                                     <button
-                                      onClick={() => setExpandedRows((prev) => { const next = new Set(prev); next.delete(ev.id); return next; })}
+                                      onClick={() => setDetailEvent(ev)}
                                       style={{ display: "block", marginTop: 4, background: "none", border: "none", color: "#2563EB", cursor: "pointer", fontSize: 12, padding: 0 }}
                                     >
-                                      Show less
+                                      View details
                                     </button>
-                                  </>
-                                ) : (
-                                  <>
-                                    {ev.additional_details.slice(0, 120)}&hellip;
-                                    <button
-                                      onClick={() => setExpandedRows((prev) => new Set(prev).add(ev.id))}
-                                      style={{ display: "block", marginTop: 4, background: "none", border: "none", color: "#2563EB", cursor: "pointer", fontSize: 12, padding: 0 }}
-                                    >
-                                      Show more
-                                    </button>
-                                  </>
-                                )
-                              ) : (
-                                ev.additional_details
-                              )}
+                                  )}
+                                </>
+                              ) : null}
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                  </div>
+
+                  {/* Mobile cards */}
+                  <div className="events-cards-mobile">
+                    {chamberEvents.map((ev) => (
+                      <div
+                        key={ev.id}
+                        className={`mobile-event-card ${ch === "assembly" ? "mobile-card-assembly" : "mobile-card-senate"}`}
+                      >
+                        <div style={{ fontWeight: 600, fontSize: 13, color: "#4B5563", marginBottom: 4 }}>
+                          {formatLegislatorName(ev)}
+                        </div>
+                        <div style={{ fontWeight: 600, fontSize: 16, color: "#111827", marginBottom: 6 }}>
+                          {ev.title}
+                          {ev.is_virtual && (
+                            <span className="badge-virtual" style={{ marginLeft: 8 }}>&#128187; Virtual</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 14, color: "#374151", marginBottom: 4 }}>
+                          {fmtDateHuman(ev.date)}{ev.time ? ` \u00B7 ${fmtTime(ev.time)}` : ""}
+                        </div>
+                        {ev.address && (
+                          <div style={{ fontSize: 13, color: "#4B5563", marginBottom: 8 }}>
+                            {ev.is_virtual ? (
+                              ev.address
+                            ) : (
+                              <FormattedAddress address={ev.address} />
+                            )}
+                          </div>
+                        )}
+                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                          {sanitizeUrl(ev.source_url) && (
+                            <a
+                              href={sanitizeUrl(ev.source_url)!}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ color: "#2563EB", textDecoration: "none", fontSize: 14, fontWeight: 500 }}
+                            >
+                              View Event &rarr;
+                            </a>
+                          )}
+                        </div>
+                        {ev.additional_details && (
+                          <details style={{ marginTop: 8 }}>
+                            <summary style={{ fontSize: 13, color: "#2563EB", cursor: "pointer", fontWeight: 500 }}>
+                              Details
+                            </summary>
+                            <p style={{ margin: "8px 0 0", fontSize: 13, color: "#4B5563", lineHeight: 1.5 }}>
+                              {ev.additional_details}
+                            </p>
+                          </details>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
               );
@@ -704,25 +1047,250 @@ export default function Home() {
         ) : (
           <div className="card" style={{ overflow: "hidden" }}>
             <div style={{ padding: "64px 24px", textAlign: "center" }}>
-              <div style={{ fontSize: 48, color: "#D1D5DB", marginBottom: 12 }}>&#128197;</div>
-              <div style={{ fontSize: 18, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
-                No upcoming events found
+              <svg
+                width="48"
+                height="48"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#D1D5DB"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ margin: "0 auto 16px" }}
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <div style={{ fontSize: 18, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                No events found
               </div>
-              <div style={{ fontSize: 14, color: "#6B7280" }}>
-                Click <strong>Generate New Report</strong> to scrape legislator websites for events.
+              <div style={{ fontSize: 14, color: "#6B7280", maxWidth: 360, margin: "0 auto 20px" }}>
+                Try broadening your search, adjusting the date range, or selecting a different chamber.
               </div>
+              <button
+                className="btn-patriot-blue"
+                style={{ padding: "8px 20px", borderRadius: 8, fontSize: 14, fontWeight: 500 }}
+                onClick={() => {
+                  setChamber("all");
+                  setDateFrom(todayIso());
+                  setDateTo(addDaysIso(30));
+                  setDatePreset("30");
+                  setSearch("");
+                  setEventType("all");
+                  setCurrentPage(1);
+                }}
+              >
+                Clear filters
+              </button>
             </div>
           </div>
         )}
       </div>
 
+      {/* Refresh Confirmation Dialog */}
+      {showConfirm && (
+        <div
+          className="fade-in"
+          onClick={() => setShowConfirm(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <div
+            className="card fade-in"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 440, width: "100%", padding: 0 }}
+          >
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid #E5E7EB" }}>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#1F2937" }}>
+                Refresh all legislator data?
+              </h3>
+            </div>
+            <div style={{ padding: "16px 24px", fontSize: 14, color: "#4B5563", lineHeight: 1.6 }}>
+              This will re-scrape all 120 legislator websites for new constituent events.
+              {lastUpdated && (
+                <> Last refresh: <strong>{fmtTimestamp(lastUpdated)}</strong>.</>
+              )}
+              {" "}This typically takes 5–10 minutes.
+            </div>
+            <div style={{ padding: "12px 24px", borderTop: "1px solid #E5E7EB", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                className="chamber-btn"
+                style={{ padding: "8px 16px", fontSize: 14 }}
+                onClick={() => setShowConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-patriot-red"
+                style={{ padding: "8px 16px", borderRadius: 8, fontSize: 14, fontWeight: 600 }}
+                onClick={handleGenerateReport}
+              >
+                Start Refresh
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <div
+          className="fade-in"
+          style={{
+            position: "fixed",
+            bottom: 24,
+            right: 24,
+            zIndex: 1100,
+            background: "#065F46",
+            color: "white",
+            padding: "12px 20px",
+            borderRadius: 10,
+            fontSize: 14,
+            fontWeight: 500,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span>&#10003;</span>
+          {toast}
+          <button
+            onClick={() => setToast(null)}
+            style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontSize: 16, padding: "0 0 0 8px", lineHeight: 1 }}
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
+      {/* Event Detail Modal */}
+      {detailEvent && (
+        <div
+          className="fade-in"
+          onClick={() => setDetailEvent(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <div
+            className="card fade-in"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: 560,
+              width: "100%",
+              maxHeight: "80vh",
+              overflowY: "auto",
+              padding: 0,
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              padding: "16px 20px",
+              borderBottom: "1px solid #E5E7EB",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "flex-start",
+              gap: 12,
+            }}>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#1F2937" }}>
+                {detailEvent.title}
+              </h3>
+              <button
+                onClick={() => setDetailEvent(null)}
+                aria-label="Close"
+                style={{
+                  background: "none",
+                  border: "none",
+                  fontSize: 20,
+                  cursor: "pointer",
+                  color: "#6B7280",
+                  padding: "0 4px",
+                  lineHeight: 1,
+                  flexShrink: 0,
+                }}
+              >
+                &times;
+              </button>
+            </div>
+            {/* Meta */}
+            <div style={{ padding: "12px 20px", borderBottom: "1px solid #F3F4F6", fontSize: 13, color: "#4B5563", display: "flex", flexWrap: "wrap", gap: "4px 16px" }}>
+              <span>{formatLegislatorName(detailEvent)}</span>
+              {detailEvent.date && <span>{fmtDateHuman(detailEvent.date)}</span>}
+              {detailEvent.time && <span>{fmtTime(detailEvent.time)}</span>}
+            </div>
+            {detailEvent.address && !detailEvent.is_virtual && (
+              <div style={{ padding: "8px 20px", borderBottom: "1px solid #F3F4F6" }}>
+                <FormattedAddress address={detailEvent.address} />
+              </div>
+            )}
+            {/* Description */}
+            <div style={{ padding: "16px 20px", fontSize: 14, color: "#374151", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+              {(() => {
+                const text = detailEvent.additional_details || "";
+                const espMatch = text.match(/\b(ESPA[ÑN]OL|Leer en Español|En Español)\b/i);
+                if (espMatch && espMatch.index != null && espMatch.index > 0) {
+                  const english = text.slice(0, espMatch.index).trim();
+                  const spanish = text.slice(espMatch.index).trim();
+                  return (
+                    <>
+                      <div>{english}</div>
+                      <hr style={{ border: "none", borderTop: "1px solid #E5E7EB", margin: "16px 0" }} />
+                      <div style={{ color: "#6B7280" }}>{spanish}</div>
+                    </>
+                  );
+                }
+                return text;
+              })()}
+            </div>
+            {/* Footer */}
+            <div style={{ padding: "12px 20px", borderTop: "1px solid #E5E7EB", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              {sanitizeUrl(detailEvent.source_url) ? (
+                <a
+                  href={sanitizeUrl(detailEvent.source_url)!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#2563EB", fontSize: 13, textDecoration: "underline" }}
+                >
+                  View original event page
+                </a>
+              ) : <span />}
+              <button
+                className="btn-patriot-blue"
+                style={{ padding: "6px 16px", borderRadius: 8, fontSize: 13, fontWeight: 500 }}
+                onClick={() => setDetailEvent(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      </main>
+
       {/* Footer */}
-      <div style={{ maxWidth: "80rem", margin: "0 auto", padding: "0 24px", marginBottom: 32 }}>
+      <footer style={{ maxWidth: "80rem", margin: "0 auto", padding: "0 24px", marginBottom: 32 }}>
         <div style={{ borderRadius: 12, overflow: "hidden" }}>
           <div className="rwb-stripe-thin" />
           <div className="card" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0, padding: "16px 24px" }}>
             <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 12, fontSize: 14 }}>
-              <div style={{ display: "flex", gap: 24, color: "#4B5563" }}>
+              <div role="status" aria-live="polite" style={{ display: "flex", gap: 24, color: "#4B5563" }}>
                 <span>&#10003; <strong>{totalEvents}</strong> events found</span>
                 <span>&#128101; <strong>{legislatorCount}</strong> legislators with events</span>
               </div>
@@ -732,10 +1300,78 @@ export default function Home() {
             </div>
           </div>
         </div>
-      </div>
+      </footer>
 
       {/* Bottom stripe */}
       <div className="rwb-stripe" />
+
+      {/* Save Filter Modal */}
+      {showSaveModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 100,
+          }}
+          onClick={() => setShowSaveModal(false)}
+        >
+          <div
+            className="card"
+            style={{ padding: 24, width: 380, maxWidth: "90vw" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600, color: "#1F2937" }}>
+              Save Current Filters
+            </h3>
+            <input
+              type="text"
+              className="filter-input"
+              style={{ width: "100%", marginBottom: 16 }}
+              placeholder="Name this filter..."
+              value={saveFilterName}
+              onChange={(e) => setSaveFilterName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSaveFilter(); }}
+              autoFocus
+            />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                onClick={() => setShowSaveModal(false)}
+                style={{
+                  padding: "6px 16px",
+                  borderRadius: 8,
+                  fontSize: 14,
+                  background: "white",
+                  border: "1px solid #D1D5DB",
+                  color: "#6B7280",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-patriot-blue"
+                style={{ padding: "6px 16px", borderRadius: 8, fontSize: 14, fontWeight: 500 }}
+                onClick={handleSaveFilter}
+                disabled={!saveFilterName.trim()}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense>
+      <HomeContent />
+    </Suspense>
   );
 }
