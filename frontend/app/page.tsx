@@ -1298,6 +1298,18 @@ function HomeContent() {
                 Last scrape: {lastUpdated ? fmtTimestamp(lastUpdated) : "Never"}
               </div>
             </div>
+            <div style={{ textAlign: "center", fontSize: 13, color: "#6B7280", marginTop: 12 }}>
+              Like this tool and need a public affairs tool for your campaign? Go to{" "}
+              <a
+                href="https://www.graniteridgestrategies.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: "var(--patriot-blue)", fontWeight: 600, textDecoration: "underline" }}
+              >
+                Granite Ridge Strategies
+              </a>{" "}
+              to learn more.
+            </div>
           </div>
         </div>
       </footer>
