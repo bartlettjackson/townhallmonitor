@@ -127,7 +127,15 @@ export default function LoginPage() {
             ))}
           </div>
           <p style={{ fontSize: 12, opacity: 0.5, marginTop: 48, margin: "48px 0 0" }}>
-            Built for government affairs professionals
+            Built for government affairs professionals by{" "}
+            <a
+              href="https://www.graniteridgestrategies.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "inherit", textDecoration: "underline" }}
+            >
+              Granite Ridge Strategies
+            </a>
           </p>
         </div>
 
