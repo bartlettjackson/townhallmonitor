@@ -73,19 +73,6 @@ function resolveClientIp(request: NextRequest): string | null {
 async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
-  // TEMPORARY DEBUG — confirm which edge header carries the real client IP in
-  // prod. Reachable only at /api/health?debug_ip=1. REMOVE after verifying.
-  if (pathname === "/api/health" && request.nextUrl.searchParams.has("debug_ip")) {
-    const envoy = request.headers.get("x-envoy-external-address");
-    const xff = request.headers.get("x-forwarded-for");
-    const real = request.headers.get("x-real-ip");
-    return NextResponse.json({
-      resolved: resolveClientIp(request),
-      source: real ? "x-real-ip" : xff ? "x-forwarded-for[0]" : "none",
-      raw: { "x-envoy-external-address": envoy, "x-forwarded-for": xff, "x-real-ip": real },
-    });
-  }
-
   // --- CSRF protection for state-changing requests ---
   if (!CSRF_SAFE_METHODS.has(request.method)) {
     // Login and register are exempt from CSRF token check (no session yet)
