@@ -2,14 +2,28 @@
 
 import asyncio
 import logging
+import ssl
 from abc import ABC, abstractmethod
+from pathlib import Path
+from urllib.parse import urlsplit
 
+import certifi
 import httpx
 from playwright.async_api import Browser, async_playwright
 
 from app.scraper.event_data import EventData
 
 logger = logging.getLogger(__name__)
+
+# asmdc.org serves a BROKEN certificate chain — it presents the wrong
+# intermediate, so the chain to a trusted root can't be built and standard TLS
+# verification fails. Rather than disable verification, we supply the correct
+# intermediate ("Entrust DV TLS Issuing RSA CA 2", chains to a certifi root)
+# and verify against certifi roots + that cert. Full verification — including
+# hostname and expiry — stays ON. Matches the domain and its subdomains.
+# (asmrc.org needs nothing special: it verifies fine against the standard bundle.)
+CUSTOM_CA_SUFFIXES = ("asmdc.org",)
+ASMDC_CA_BUNDLE = Path(__file__).resolve().parent / "certs" / "entrust_dv_tls_issuing_rsa_ca2.pem"
 
 USER_AGENT = (
     "CA-TownHall-Monitor/1.0 "
@@ -41,6 +55,7 @@ class BaseScraper(ABC):
 
     def __init__(self):
         self._http_client: httpx.AsyncClient | None = None
+        self._http_client_asmdc: httpx.AsyncClient | None = None
         self._browser: Browser | None = None
         self._pw_context_manager = None
         self._last_request_at: float = 0.0
@@ -49,16 +64,38 @@ class BaseScraper(ABC):
 
     # -- resource management --------------------------------------------------
 
-    async def _get_http_client(self) -> httpx.AsyncClient:
+    @staticmethod
+    def _needs_custom_ca(url: str) -> bool:
+        """Whether this URL needs the vendored intermediate to verify (asmdc.org)."""
+        host = (urlsplit(url).hostname or "").lower()
+        return any(host == d or host.endswith("." + d) for d in CUSTOM_CA_SUFFIXES)
+
+    @staticmethod
+    def _build_asmdc_ssl_context() -> ssl.SSLContext:
+        """certifi roots + the correct asmdc.org intermediate. Verification stays ON."""
+        ctx = ssl.create_default_context(cafile=certifi.where())
+        ctx.load_verify_locations(cafile=str(ASMDC_CA_BUNDLE))
+        return ctx
+
+    async def _get_http_client(self, url: str) -> httpx.AsyncClient:
+        # asmdc.org needs the vendored intermediate added to the trust store;
+        # every other host uses the default certifi bundle. Both verify fully.
+        if self._needs_custom_ca(url):
+            if self._http_client_asmdc is None:
+                self._http_client_asmdc = httpx.AsyncClient(
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=REQUEST_TIMEOUT,
+                    follow_redirects=True,
+                    verify=self._build_asmdc_ssl_context(),
+                )
+            return self._http_client_asmdc
+
         if self._http_client is None:
-            # Disable SSL verification: we only fetch public HTML from
-            # government sites (.ca.gov). The asmdc.org/asmrc.org certificate
-            # chain is not in standard Linux CA bundles.
             self._http_client = httpx.AsyncClient(
                 headers={"User-Agent": USER_AGENT},
                 timeout=REQUEST_TIMEOUT,
                 follow_redirects=True,
-                verify=False,
+                verify=True,
             )
         return self._http_client
 
@@ -82,6 +119,9 @@ class BaseScraper(ABC):
         if self._http_client:
             await self._http_client.aclose()
             self._http_client = None
+        if self._http_client_asmdc:
+            await self._http_client_asmdc.aclose()
+            self._http_client_asmdc = None
         if self._browser:
             await self._browser.close()
             self._browser = None
@@ -104,7 +144,7 @@ class BaseScraper(ABC):
         Returns the Response on success, or None if all retries exhausted.
         Non-retryable errors (4xx, DNS failures, other HTTP errors) return None immediately.
         """
-        client = await self._get_http_client()
+        client = await self._get_http_client(url)
         last_exc: Exception | None = None
 
         for attempt in range(1, MAX_RETRIES + 1):

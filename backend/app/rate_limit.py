@@ -75,38 +75,47 @@ class RateLimiter:
 
     # -- Per-account failed login limiting --
 
-    def check_account_lock(self, email: str) -> int | None:
-        """Check if account is temporarily locked.
+    def check_account_lock(self, ip: str, email: str) -> int | None:
+        """Check if this (IP, account) pair is temporarily locked.
+
+        Scoping the lock to the IP prevents a remote attacker from locking a
+        victim out of their account by spamming bad passwords — only the
+        attacker's own (IP, email) pair gets locked.
 
         Returns None if allowed, or seconds until unlock if locked.
         """
-        unlock_at = self._account_locks.get(email)
+        lock_key = f"{ip}|{email}"
+        unlock_at = self._account_locks.get(lock_key)
         if unlock_at and time.monotonic() < unlock_at:
             retry_after = int(unlock_at - time.monotonic()) + 1
-            logger.warning("Rate limit: account %s is locked", mask_email(email))
+            logger.warning("Rate limit: account %s is locked for IP %s", mask_email(email), ip)
             return max(retry_after, 1)
         return None
 
-    def record_failed_login(self, email: str):
-        """Record a failed login attempt for the email.
+    def record_failed_login(self, ip: str, email: str):
+        """Record a failed login attempt for this (IP, account) pair.
 
-        After 5 failures in 30 min, lock the account for 15 min.
+        After 5 failures in 30 min, lock the (IP, account) pair for 15 min.
         """
-        bucket = self._get("login_account", email)
+        lock_key = f"{ip}|{email}"
+        bucket = self._get("login_account", lock_key)
         bucket.record()
         window = 1800  # 30 minutes
         if bucket.count(window) >= 5:
-            self._account_locks[email] = time.monotonic() + 900  # 15 min lock
+            self._account_locks[lock_key] = time.monotonic() + 900  # 15 min lock
             logger.warning(
-                "Rate limit: account %s locked for 15 min after 5 failures", mask_email(email)
+                "Rate limit: account %s locked for 15 min after 5 failures (IP %s)",
+                mask_email(email),
+                ip,
             )
 
-    def clear_failed_logins(self, email: str):
+    def clear_failed_logins(self, ip: str, email: str):
         """Clear failed login count on successful login."""
-        key = ("login_account", email)
+        lock_key = f"{ip}|{email}"
+        key = ("login_account", lock_key)
         if key in self._buckets:
             del self._buckets[key]
-        self._account_locks.pop(email, None)
+        self._account_locks.pop(lock_key, None)
 
     # -- Per-IP invite/register rate limiting --
 

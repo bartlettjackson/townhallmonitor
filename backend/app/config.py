@@ -25,6 +25,18 @@ ALLOWED_ORIGINS = [
     o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if o.strip()
 ]
 
+# Admin allowlist — only these emails may perform admin actions (e.g. mint invite codes)
+ADMIN_EMAILS = [
+    e.strip().lower()
+    for e in os.getenv("ADMIN_EMAILS", "bartlett.jackson@gmail.com").split(",")
+    if e.strip()
+]
+
+# Number of trusted reverse-proxy hops in front of the app (Railway edge = 1).
+# Used to pick the real client IP from X-Forwarded-For: the Nth entry from the
+# right is what our trusted proxy observed; leftmost entries are client-spoofable.
+TRUSTED_PROXY_HOPS = int(os.getenv("TRUSTED_PROXY_HOPS", "1"))
+
 # Scheduler: cron expression for daily scrape (default 6 AM Pacific)
 SCRAPE_CRON = os.getenv("SCRAPE_CRON", "0 6 * * *")
 SCRAPE_ENABLED = os.getenv("SCRAPE_ENABLED", "true").lower() in ("true", "1", "yes")

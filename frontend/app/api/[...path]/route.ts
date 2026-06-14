@@ -3,6 +3,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND_URL = process.env.API_URL || "http://localhost:8000";
 
+// Cookies are Secure (HTTPS-only) everywhere except explicit local dev.
+// Fail closed: default to Secure unless this is a dev build, or COOKIE_INSECURE=1
+// is set for local HTTP testing. This avoids shipping auth cookies without the
+// Secure flag if NODE_ENV is ever unset/misconfigured in the deployed runtime.
+const COOKIE_SECURE =
+  process.env.COOKIE_INSECURE !== "1" && process.env.NODE_ENV !== "development";
+
 const ALLOWED_ORIGINS = new Set([
   "https://www.townhallmonitor.com",
   "https://townhallmonitor.com",
@@ -150,14 +157,14 @@ async function proxy(request: NextRequest) {
           const csrfToken = randomBytes(32).toString("hex");
           res.cookies.set("auth_token", refreshData.access_token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
+            secure: COOKIE_SECURE,
             sameSite: "strict",
             maxAge: 30 * 60,
             path: "/",
           });
           res.cookies.set("csrf_token", csrfToken, {
             httpOnly: false,
-            secure: process.env.NODE_ENV === "production",
+            secure: COOKIE_SECURE,
             sameSite: "strict",
             maxAge: 30 * 60,
             path: "/",
@@ -165,7 +172,7 @@ async function proxy(request: NextRequest) {
           if (refreshData.refresh_token) {
             res.cookies.set("refresh_token", refreshData.refresh_token, {
               httpOnly: true,
-              secure: process.env.NODE_ENV === "production",
+              secure: COOKIE_SECURE,
               sameSite: "strict",
               maxAge: 7 * 24 * 60 * 60,
               path: "/api/auth/refresh",
@@ -194,14 +201,14 @@ async function proxy(request: NextRequest) {
     if (data.token) {
       res.cookies.set("auth_token", data.token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
+        secure: COOKIE_SECURE,
         sameSite: "strict",
         maxAge: 30 * 60, // 30 minutes — matches access token lifetime
         path: "/",
       });
       res.cookies.set("csrf_token", csrfToken, {
         httpOnly: false,
-        secure: process.env.NODE_ENV === "production",
+        secure: COOKIE_SECURE,
         sameSite: "strict",
         maxAge: 30 * 60,
         path: "/",
@@ -210,7 +217,7 @@ async function proxy(request: NextRequest) {
     if (refresh_token) {
       res.cookies.set("refresh_token", refresh_token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
+        secure: COOKIE_SECURE,
         sameSite: "strict",
         maxAge: 7 * 24 * 60 * 60, // 7 days
         path: "/api/auth/refresh",

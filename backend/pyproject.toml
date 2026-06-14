@@ -13,6 +13,11 @@ sqlalchemy = {extras = ["asyncio"], version = "^2.0"}
 alembic = "^1.14.0"
 asyncpg = "^0.30.0"
 httpx = "^0.28.0"
+# Rolling CA bundle — floor only, never cap (we want the freshest roots).
+# Floor = the bundle we verified the asmdc.org chain against (contains the
+# Sectigo Public Server Authentication Root R46 that the vendored intermediate
+# chains to). See app/scraper/certs/entrust_dv_tls_issuing_rsa_ca2.pem.
+certifi = ">=2026.2.25"
 beautifulsoup4 = "^4.13.0"
 playwright = "^1.49.0"
 apscheduler = "^3.11.0"

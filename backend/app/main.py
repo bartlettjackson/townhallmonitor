@@ -27,7 +27,13 @@ from app.auth import (
     verify_password,
     verify_password_timing_safe,
 )
-from app.config import ALLOWED_ORIGINS, SCRAPE_CRON, SCRAPE_ENABLED
+from app.config import (
+    ADMIN_EMAILS,
+    ALLOWED_ORIGINS,
+    SCRAPE_CRON,
+    SCRAPE_ENABLED,
+    TRUSTED_PROXY_HOPS,
+)
 from app.database import get_session
 from app.invite import generate_invite_code, validate_and_consume_invite
 from app.models.event import Event
@@ -65,6 +71,24 @@ def _log_security_event(
 
     level = logging.INFO if outcome == "success" else logging.WARNING
     _security_logger.log(level, "%s: %s", event_type, outcome, extra=extra)
+
+
+def _client_ip(request: Request) -> str:
+    """Return the real client IP, accounting for trusted reverse proxies.
+
+    X-Forwarded-For is a comma-separated list where each proxy appends the
+    address it received the request from. With TRUSTED_PROXY_HOPS trusted
+    proxies in front (Railway edge = 1), the trustworthy client address is the
+    Nth entry from the right — leftmost entries are client-supplied/spoofable
+    and must not be used for rate limiting.
+    """
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            idx = len(parts) - TRUSTED_PROXY_HOPS
+            return parts[idx] if 0 <= idx < len(parts) else parts[0]
+    return request.client.host if request.client else "unknown"
 
 
 def _to_pacific_iso(dt_val: datetime | None) -> str | None:
@@ -276,10 +300,7 @@ class RegisterRequest(StrictBase):
 
 @app.post("/api/auth/login")
 async def login(body: LoginRequest, request: Request, session: AsyncSession = Depends(get_session)):
-    ip = request.headers.get(
-        "x-forwarded-for", request.client.host if request.client else "unknown"
-    )
-    ip = ip.split(",")[0].strip()
+    ip = _client_ip(request)
 
     # Per-IP rate limit
     retry = limiter.check_login_ip(ip)
@@ -289,8 +310,9 @@ async def login(body: LoginRequest, request: Request, session: AsyncSession = De
             status_code=429, detail="Too many login attempts", headers={"Retry-After": str(retry)}
         )
 
-    # Per-account lock check
-    retry = limiter.check_account_lock(body.email)
+    # Per-account lock check (scoped to this IP so an attacker can't lock out
+    # a victim's account from a different IP)
+    retry = limiter.check_account_lock(ip, body.email)
     if retry:
         _log_security_event("login_rate_limit", "blocked", ip, body.email, reason="account_locked")
         raise HTTPException(
@@ -303,11 +325,11 @@ async def login(body: LoginRequest, request: Request, session: AsyncSession = De
     user = result.scalar_one_or_none()
     # Always run bcrypt even if user is None — prevents timing side-channel
     if not verify_password_timing_safe(body.password, user):
-        limiter.record_failed_login(body.email)
+        limiter.record_failed_login(ip, body.email)
         _log_security_event("login", "failure", ip, body.email)
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    limiter.clear_failed_logins(body.email)
+    limiter.clear_failed_logins(ip, body.email)
     _log_security_event("login", "success", ip, body.email)
     access_token = create_access_token(user.id, user.email, user.token_version)
     refresh_token = await create_refresh_token(user.id, session)
@@ -322,10 +344,7 @@ async def login(body: LoginRequest, request: Request, session: AsyncSession = De
 async def register(
     body: RegisterRequest, request: Request, session: AsyncSession = Depends(get_session)
 ):
-    ip = request.headers.get(
-        "x-forwarded-for", request.client.host if request.client else "unknown"
-    )
-    ip = ip.split(",")[0].strip()
+    ip = _client_ip(request)
 
     # Per-IP invite/register rate limit
     retry = limiter.check_register_ip(ip)
@@ -437,6 +456,11 @@ async def create_invite_code(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    # Only admins may mint invite codes — a single compromised non-admin
+    # account otherwise lets an attacker self-perpetuate access.
+    if user.email.lower() not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
     code = await generate_invite_code(
         session,
         created_by=user.id,
