@@ -51,6 +51,23 @@ function checkCsrfToken(request: NextRequest): boolean {
   return cookieToken === headerToken;
 }
 
+// Resolve the real client IP at the public edge so the (private) backend can
+// rate-limit per real user instead of per shared proxy IP.
+//
+// Railway's Envoy edge sets `x-envoy-external-address` to the trusted external
+// client address (non-spoofable for external requests); Railway's documented
+// fallback is the first entry of `x-forwarded-for`. We forward ONE clean value
+// to the backend over the private network — the backend is only reachable at
+// `*.railway.internal`, so it trusts whatever we send (no external spoofing).
+function resolveClientIp(request: NextRequest): string | null {
+  const envoy = request.headers.get("x-envoy-external-address")?.trim();
+  if (envoy) return envoy;
+  const first = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  if (first) return first;
+  const real = request.headers.get("x-real-ip")?.trim();
+  return real || null;
+}
+
 async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
@@ -103,6 +120,14 @@ async function proxy(request: NextRequest) {
   // --- Build headers ---
   const headers = new Headers();
   headers.set("content-type", request.headers.get("content-type") || "application/json");
+
+  // Forward the real client IP so the backend rate-limiter / login lockout key
+  // on the actual user, not this proxy. Single clean value → backend reads it
+  // with TRUSTED_PROXY_HOPS=1.
+  const clientIp = resolveClientIp(request);
+  if (clientIp) {
+    headers.set("x-forwarded-for", clientIp);
+  }
 
   // Add Authorization from cookie (for non-auth endpoints)
   const token = request.cookies.get("auth_token")?.value;
