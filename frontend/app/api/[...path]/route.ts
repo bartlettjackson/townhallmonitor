@@ -54,16 +54,20 @@ function checkCsrfToken(request: NextRequest): boolean {
 // Resolve the real client IP at the public edge so the (private) backend can
 // rate-limit per real user instead of per shared proxy IP.
 //
-// Trust ONLY `x-envoy-external-address`: Railway's Envoy edge sets/overwrites
-// it with the true external client address, so a client cannot spoof it. We
-// deliberately do NOT fall back to `x-forwarded-for` / `x-real-ip` — those are
-// client-controllable, and honoring them would let an attacker forge their IP
-// to dodge rate limits or target a victim's login lockout. If the envoy header
-// is absent we return null; the backend then falls back to its own connection
-// peer (the proxy IP) — coarse, but not spoofable. The outbound request is
-// built from a fresh Headers object, so no inbound client header is forwarded.
+// Empirically verified against this Railway deployment (2026-06-14, see the
+// /api/health?debug_ip=1 probe): Railway's edge OVERWRITES inbound `x-real-ip`
+// and `x-forwarded-for` with the true client address — spoofed values are
+// dropped — so both are non-spoofable HERE. By contrast `x-envoy-external-
+// address` is NOT set by the edge and passes a client-supplied value straight
+// through, so it must NOT be trusted on this platform. We use `x-real-ip`
+// (single edge-set value = real client), falling back to the first XFF entry.
+// The outbound request uses a fresh Headers object, so no inbound client header
+// is forwarded except the single clean value we set below.
 function resolveClientIp(request: NextRequest): string | null {
-  return request.headers.get("x-envoy-external-address")?.trim() || null;
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
+  const firstXff = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return firstXff || null;
 }
 
 async function proxy(request: NextRequest) {
@@ -77,7 +81,7 @@ async function proxy(request: NextRequest) {
     const real = request.headers.get("x-real-ip");
     return NextResponse.json({
       resolved: resolveClientIp(request),
-      trusted: envoy ? "x-envoy-external-address" : "none (envoy header absent — xff/x-real-ip are present but NOT trusted)",
+      source: real ? "x-real-ip" : xff ? "x-forwarded-for[0]" : "none",
       raw: { "x-envoy-external-address": envoy, "x-forwarded-for": xff, "x-real-ip": real },
     });
   }
