@@ -212,6 +212,25 @@ export default function RegisterPage() {
               >
                 {loading ? "Creating account..." : "Create Account"}
               </button>
+
+              <p
+                style={{
+                  marginTop: 14,
+                  textAlign: "center",
+                  fontSize: 12,
+                  color: "#6B7280",
+                  lineHeight: 1.5,
+                }}
+              >
+                By creating an account, you agree to our{" "}
+                <a
+                  href="/privacy"
+                  style={{ color: "var(--patriot-blue)", fontWeight: 600 }}
+                >
+                  Privacy Policy
+                </a>
+                .
+              </p>
             </form>
 
             <div

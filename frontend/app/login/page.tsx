@@ -278,6 +278,19 @@ export default function LoginPage() {
                   Register
                 </a>
               </div>
+
+              <div
+                style={{
+                  marginTop: 12,
+                  textAlign: "center",
+                  fontSize: 12,
+                  color: "#9CA3AF",
+                }}
+              >
+                <a href="/privacy" style={{ color: "#6B7280", textDecoration: "underline" }}>
+                  Privacy Policy
+                </a>
+              </div>
             </div>
           </div>
         </div>

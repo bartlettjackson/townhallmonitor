@@ -1310,6 +1310,11 @@ function HomeContent() {
               </a>{" "}
               to learn more.
             </div>
+            <div style={{ textAlign: "center", fontSize: 12, color: "#9CA3AF", marginTop: 10 }}>
+              <a href="/privacy" style={{ color: "#6B7280", textDecoration: "underline" }}>
+                Privacy Policy
+              </a>
+            </div>
           </div>
         </div>
       </footer>
